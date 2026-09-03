@@ -28,20 +28,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes ninja-build libx11-dev libxrandr-dev libxcursor-dev libxi-dev libudev-dev libgl1-mesa-dev libfreetype6-dev xvfb
 
-      - name: Configure Release
+      - name: Configure Release on Linux
+        if: runner.os == 'Linux'
         run: cmake -S . -B build/ci -G Ninja -DCMAKE_BUILD_TYPE=Release
 
+      - name: Configure Release with MSVC
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build/ci -G "Visual Studio 17 2022" -A x64
+
       - name: Build Release
-        run: cmake --build build/ci --parallel 2
+        run: cmake --build build/ci --config Release --parallel 2
 
       - name: Run CTest
-        run: ctest --test-dir build/ci --output-on-failure --no-tests=error
+        run: ctest --test-dir build/ci -C Release --output-on-failure --no-tests=error
 
       - name: Install tree
-        run: cmake --install build/ci --prefix build/install
+        run: cmake --install build/ci --config Release --prefix build/install
 
       - name: Create package and checksum
-        run: cpack --config build/ci/CPackConfig.cmake
+        run: cpack --config build/ci/CPackConfig.cmake -C Release
 
       - name: Linux packaged resource and arbitrary-CWD smoke
         if: runner.os == 'Linux'

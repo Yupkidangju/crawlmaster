@@ -85,8 +85,16 @@ jobs:
           Stop-Process -Id $process.Id
           Pop-Location
 
-      - name: Generate complete artifact SPDX SBOM
-        run: python scripts/generate_release_sbom.py --install-root build/install --platform "${{ runner.os }}" --output "build/ci/package/Crawlmaster-${{ runner.os }}-artifact.spdx.json"
+      - name: Generate complete artifact SPDX SBOM on Linux
+        if: runner.os == 'Linux'
+        run: python scripts/generate_release_sbom.py --install-root build/install --platform Linux --output build/ci/package/Crawlmaster-Linux-artifact.spdx.json
+
+      - name: Generate complete artifact SPDX SBOM on Windows
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          python scripts\generate_release_sbom.py --install-root build\install --platform Windows --output build\ci\package\Crawlmaster-Windows-artifact.spdx.json
 
       - name: Generate independent Syft SPDX inventory
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0

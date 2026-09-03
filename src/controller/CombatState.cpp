@@ -235,17 +235,18 @@ void CombatState::handleInput(const sf::Event& event) {
     }
 
     // 타겟팅 조절 (좌/우 방향키를 누르면 살아있는 다른 몬스터 조준)
+    const int foeCount = static_cast<int>(m_foes.size());
     if (key == sf::Keyboard::Left) {
         int original = m_selectedTargetIdx;
         do {
-            m_selectedTargetIdx = (m_selectedTargetIdx + m_foes.size() - 1) % m_foes.size();
+            m_selectedTargetIdx = (m_selectedTargetIdx + foeCount - 1) % foeCount;
         } while (m_foes[m_selectedTargetIdx]->isDead() && m_selectedTargetIdx != original);
         updateTuiContent();
         return;
     } else if (key == sf::Keyboard::Right) {
         int original = m_selectedTargetIdx;
         do {
-            m_selectedTargetIdx = (m_selectedTargetIdx + 1) % m_foes.size();
+            m_selectedTargetIdx = (m_selectedTargetIdx + 1) % foeCount;
         } while (m_foes[m_selectedTargetIdx]->isDead() && m_selectedTargetIdx != original);
         updateTuiContent();
         return;
@@ -366,7 +367,7 @@ void CombatState::nextTurn() {
     }
 
     // 3. 턴 인덱스 순환
-    m_currentTurnIdx = (m_currentTurnIdx + 1) % m_turnOrder.size();
+    m_currentTurnIdx = (m_currentTurnIdx + 1) % static_cast<int>(m_turnOrder.size());
     const auto& nextEntity = m_turnOrder[m_currentTurnIdx];
 
     // 4. 차례 대상이 이미 죽은 대상인지 스킵 필터링

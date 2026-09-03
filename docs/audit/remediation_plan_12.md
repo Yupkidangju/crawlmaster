@@ -1,4 +1,4 @@
-# Hosted release gate 보완 계획 — Runs 33779295660, 33780571383, 33781740992
+# Hosted release gate 보완 계획 — Runs 33779295660, 33780571383, 33781740992, 33782865463
 
 작성일: 2026-09-04 (Asia/Seoul)
 입력 감사: `audit_report_11.md`
@@ -20,6 +20,7 @@
   - `ResourceLocator.cpp`: `getenv`에 대한 C4996
   - `test_harness.cpp`: `size_t`를 `int`로 암시 변환한 C4267 두 건
 - Hosted run `33781740992`, Windows job `100736819048`은 위 경고를 모두 통과한 뒤 `CharacterInfoState.cpp`의 inventory 크기 두 곳에서 추가 C4267이 드러나 build 후반에 중단됐다.
+- Hosted run `33782865463`, Windows job `100740514064`은 위 경고를 통과한 뒤 `CombatState.cpp`의 대상 순환 연산에서 `size_t` 결과를 `int` index에 대입한 C4267 한 건으로 중단됐다. 동일한 index 계약을 쓰는 좌·우 대상 순환과 turn 순환을 함께 정렬한다.
 
 ## 변경 범위
 
@@ -30,6 +31,7 @@
 - Windows 파일 열기는 MSVC secure CRT의 `_wsopen_s`로 전환하고 환경 변수 읽기는 `_dupenv_s` 기반 값 복사로 전환한다.
 - 테스트의 컨테이너 크기는 `std::size_t`로 유지해 손실 가능 변환을 제거한다.
 - CharacterInfoState의 기존 `int` UI index 계약과 비교하는 inventory 크기는 명시적 경계 변환으로 의도를 고정한다.
+- CombatState의 기존 `int` UI/turn index 계약에 맞춰 vector 크기를 연산 전에 명시적으로 변환한다.
 
 ## 검증 기준
 

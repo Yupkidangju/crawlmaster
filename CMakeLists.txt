@@ -262,8 +262,14 @@ add_test(NAME RngReplayCheckpointWrite COMMAND RngProcessReplayTests write
     "${RNG_REPLAY_DIR}/save.json" "${RNG_REPLAY_DIR}/expected.txt" "${RNG_REPLAY_DIR}/config.json")
 set_tests_properties(RngReplayCheckpointWrite PROPERTIES
     FIXTURES_REQUIRED RngReplayFixture FIXTURES_SETUP RngReplayCheckpoint)
-add_test(NAME RngReplayCheckpointContinue COMMAND RngProcessReplayTests continue
-    "${RNG_REPLAY_DIR}/save.json" "${RNG_REPLAY_DIR}/expected.txt" "${RNG_REPLAY_DIR}/config.json")
+if(XVFB_RUN_EXECUTABLE)
+    add_test(NAME RngReplayCheckpointContinue COMMAND ${XVFB_RUN_EXECUTABLE} -a
+        $<TARGET_FILE:RngProcessReplayTests> continue
+        "${RNG_REPLAY_DIR}/save.json" "${RNG_REPLAY_DIR}/expected.txt" "${RNG_REPLAY_DIR}/config.json")
+else()
+    add_test(NAME RngReplayCheckpointContinue COMMAND $<TARGET_FILE:RngProcessReplayTests> continue
+        "${RNG_REPLAY_DIR}/save.json" "${RNG_REPLAY_DIR}/expected.txt" "${RNG_REPLAY_DIR}/config.json")
+endif()
 set_tests_properties(RngReplayCheckpointContinue PROPERTIES FIXTURES_REQUIRED RngReplayCheckpoint)
 
 add_executable(UiStateRasterTests tests/test_ui_state_raster.cpp)

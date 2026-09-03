@@ -6,6 +6,9 @@
 
 ## [Unreleased] - Turn 1 audit remediation
 
+### Hosted gate fixes
+* Linux hosted runner에서 production-linked RNG Continue test가 DISPLAY 부재로 중단되지 않도록 해당 CTest를 Xvfb 경로에 연결했다. Windows는 기존 직접 실행 경로를 유지한다.
+
 ### Re-audit 11 remediation
 * 공격형 Skill을 일반 공격과 동일한 `CombatRules` 명중/Bless/natural roll/무기 dice/type/Skeleton mitigation 경로로 통합했다.
 * schema v2 checkpoint에 raw RNG draw count를 추가하고 Continue가 별도 process에서도 seed/stream을 복원하도록 수정했다.

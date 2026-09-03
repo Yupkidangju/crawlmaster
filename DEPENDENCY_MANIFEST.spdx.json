@@ -1,0 +1,88 @@
+{
+  "spdxVersion": "SPDX-2.3",
+  "dataLicense": "CC0-1.0",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "name": "Crawlmaster-0.9.4-source-component-manifest",
+  "documentComment": "Source component manifest for immutable code dependencies and bundled fonts. CI generates an artifact-specific Syft SPDX SBOM and Grype report; platform runtime libraries remain external system requirements.",
+  "documentNamespace": "https://crawlmaster.local/spdx/Crawlmaster-0.9.4-20260903",
+  "creationInfo": {
+    "created": "2026-09-03T00:00:00Z",
+    "creators": ["Tool: Codex remediation audit"]
+  },
+  "packages": [
+    {
+      "name": "Crawlmaster",
+      "SPDXID": "SPDXRef-Package-Crawlmaster",
+      "versionInfo": "0.9.4",
+      "downloadLocation": "NOASSERTION",
+      "filesAnalyzed": false,
+      "licenseConcluded": "NOASSERTION",
+      "licenseDeclared": "NOASSERTION",
+      "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "SFML",
+      "SPDXID": "SPDXRef-Package-SFML",
+      "versionInfo": "2.6.1+69ea0cd863aed1d4092b970b676924a716ff718b",
+      "downloadLocation": "git+https://github.com/SFML/SFML.git@69ea0cd863aed1d4092b970b676924a716ff718b",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Zlib",
+      "licenseDeclared": "Zlib",
+      "copyrightText": "Copyright 2007-2023 Laurent Gomila",
+      "externalRefs": [
+        {"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:github/SFML/SFML@69ea0cd863aed1d4092b970b676924a716ff718b"}
+      ]
+    },
+    {
+      "name": "nlohmann-json",
+      "SPDXID": "SPDXRef-Package-nlohmann-json",
+      "versionInfo": "3.11.3+9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03",
+      "downloadLocation": "git+https://github.com/nlohmann/json.git@9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT",
+      "licenseDeclared": "MIT",
+      "copyrightText": "Copyright 2013-2022 Niels Lohmann",
+      "externalRefs": [
+        {"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:github/nlohmann/json@9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03"}
+      ]
+    },
+    {
+      "name": "Noto Sans CJK",
+      "SPDXID": "SPDXRef-Package-NotoSansCJK",
+      "versionInfo": "20240730+repack1-1build1",
+      "downloadLocation": "https://github.com/notofonts/noto-cjk",
+      "filesAnalyzed": false,
+      "licenseConcluded": "OFL-1.1",
+      "licenseDeclared": "OFL-1.1",
+      "copyrightText": "Copyright 2014-2024 Adobe and Google"
+    },
+    {
+      "name": "Ubuntu Mono",
+      "SPDXID": "SPDXRef-Package-UbuntuMono",
+      "versionInfo": "0.869+git20240321-0ubuntu2",
+      "downloadLocation": "https://design.ubuntu.com/font/",
+      "filesAnalyzed": false,
+      "licenseConcluded": "Ubuntu-font-1.0",
+      "licenseDeclared": "Ubuntu-font-1.0",
+      "copyrightText": "Copyright 2010-2022 Canonical Ltd"
+    },
+    {
+      "name": "NeoDunggeunmo",
+      "SPDXID": "SPDXRef-Package-NeoDunggeunmo",
+      "versionInfo": "1.601+cbe9a3c6b7067c62612570ee1261b39a31e5061b",
+      "downloadLocation": "https://github.com/neodgm/neodgm/releases/tag/v1.601",
+      "filesAnalyzed": false,
+      "licenseConcluded": "OFL-1.1",
+      "licenseDeclared": "OFL-1.1",
+      "copyrightText": "Copyright 2017-2024 Eunbin Jeong"
+    }
+  ],
+  "relationships": [
+    {"spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBES", "relatedSpdxElement": "SPDXRef-Package-Crawlmaster"},
+    {"spdxElementId": "SPDXRef-Package-Crawlmaster", "relationshipType": "DEPENDS_ON", "relatedSpdxElement": "SPDXRef-Package-SFML"},
+    {"spdxElementId": "SPDXRef-Package-Crawlmaster", "relationshipType": "DEPENDS_ON", "relatedSpdxElement": "SPDXRef-Package-nlohmann-json"},
+    {"spdxElementId": "SPDXRef-Package-Crawlmaster", "relationshipType": "CONTAINS", "relatedSpdxElement": "SPDXRef-Package-NotoSansCJK"},
+    {"spdxElementId": "SPDXRef-Package-Crawlmaster", "relationshipType": "CONTAINS", "relatedSpdxElement": "SPDXRef-Package-UbuntuMono"},
+    {"spdxElementId": "SPDXRef-Package-Crawlmaster", "relationshipType": "CONTAINS", "relatedSpdxElement": "SPDXRef-Package-NeoDunggeunmo"}
+  ]
+}

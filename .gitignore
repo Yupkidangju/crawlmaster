@@ -1,0 +1,19 @@
+# 빌드·패키지 산출물
+/build/
+/cmake-build-*/
+
+# 런타임 사용자 데이터
+/save.json
+/config.json
+*.tmp
+*.bak
+*.corrupt-*.json
+
+# 도구 캐시
+__pycache__/
+*.py[cod]
+
+# 편집기·운영체제 메타데이터
+.DS_Store
+/.idea/
+/.vscode/

@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "run_directory": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/1",
+  "reports": [
+    {
+      "path": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/1/sub_audit_01_product_contract.md",
+      "sha256": "01bc811fbecde81177e3611306451fe7b252973f13cb226ca5e5e285ecbb0170",
+      "size": 43368,
+      "sealed_at_utc": "2026-09-03T07:41:05.043422+00:00"
+    },
+    {
+      "path": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/1/sub_audit_02_interface_ux.md",
+      "sha256": "33c1140380416fc4f9aea7864ec5d04f1a6922cc3397630e915c6fe40be36129",
+      "size": 47658,
+      "sealed_at_utc": "2026-09-03T07:45:53.865538+00:00"
+    },
+    {
+      "path": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/1/sub_audit_03_game_systems.md",
+      "sha256": "34e696b1f6c7fcde94682a68a2dabf05fffb02f17cd70d1b1328dc839c20c507",
+      "size": 49788,
+      "sealed_at_utc": "2026-09-03T07:41:48.807380+00:00"
+    },
+    {
+      "path": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/1/sub_audit_04_content_depth.md",
+      "sha256": "4554d1205bd6b20f712fbd76630efc93929ed4f368fdf26a54713b97487b3d09",
+      "size": 39623,
+      "sealed_at_utc": "2026-09-03T07:38:41.026980+00:00"
+    },
+    {
+      "path": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/1/sub_audit_05_engineering_runtime.md",
+      "sha256": "2c011a22c6d4bb927ff76613cdccfcbdcfebdc766cd45f5721f478935a6aafa3",
+      "size": 37221,
+      "sealed_at_utc": "2026-09-03T07:43:18.185649+00:00"
+    },
+    {
+      "path": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/1/sub_audit_06_commercial_release.md",
+      "sha256": "5b4f7c6f6bb3ba1fba2a94c6273febabe28671055ed1fcba2968c9dea9c2ffb7",
+      "size": 51634,
+      "sealed_at_utc": "2026-09-03T07:48:13.863587+00:00"
+    }
+  ],
+  "missing_source_reports": [],
+  "finalized_at_utc": "2026-09-03T07:50:34.279737+00:00"
+}

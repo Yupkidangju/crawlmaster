@@ -1,0 +1,21 @@
+{
+  "generatedAt": "2026-09-03T00:00:00+09:00",
+  "service": "https://api.osv.dev/v1/querybatch",
+  "queries": [
+    {
+      "component": "SFML",
+      "commit": "69ea0cd863aed1d4092b970b676924a716ff718b"
+    },
+    {
+      "component": "nlohmann-json",
+      "commit": "9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03"
+    }
+  ],
+  "response": {
+    "results": [
+      {},
+      {}
+    ]
+  },
+  "interpretation": "OSV returned no advisories for either exact commit at query time. This is a time-bounded known-vulnerability lookup, not proof of absence of vulnerabilities."
+}

@@ -665,12 +665,12 @@ void testMonsterAndQuestSystem() {
     CHECK((*it2)->checkCompletion() == true);
 
     // 퀘스트 완료 보고 및 가방 내 수집한 실제 메이스 2개 자동 삭제 검증
-    int bagSizeBefore = party.getInventory().size();
+    const std::size_t bagSizeBefore = party.getInventory().size();
     party.completeQuest("qst_collect_maces");
     
     CHECK(party.hasQuest("qst_collect_maces") == false);
     // 가방 크기가 (이전 크기 - 2) 가 되었는지 검사
-    CHECK(static_cast<int>(party.getInventory().size()) == bagSizeBefore - 2);
+    CHECK(party.getInventory().size() == bagSizeBefore - 2);
 
     std::cout << "-> [Success] 퀘스트 진척도 갱신, 수집 아이템 자동 차감 및 보상 분배 검증 완료." << std::endl;
 }
@@ -1211,7 +1211,7 @@ void testShopSelling() {
     CHECK(sword->getGoldValue() == 30);
 
     party.addItem(sword);
-    int initialInvSize = party.getInventory().size();
+    const std::size_t initialInvSize = party.getInventory().size();
     int initialGold = party.getGold();
 
     // 2. 판매 로직 시뮬레이션 (원가의 50% = 15G 획득 및 인벤토리 제거)
@@ -1232,7 +1232,7 @@ void testShopSelling() {
 
     // 3. 골드 및 가방 수량 단언 검증
     CHECK(party.getGold() == initialGold + 15);
-    CHECK(static_cast<int>(party.getInventory().size()) == initialInvSize - 1);
+    CHECK(party.getInventory().size() == initialInvSize - 1);
 
     // 4. 세이브 로드 정합성 복원 검증
     crawl::Party reloadParty;

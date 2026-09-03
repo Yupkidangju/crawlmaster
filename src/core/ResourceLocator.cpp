@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdlib>
+#include <string>
 #include <system_error>
 
 #ifdef _WIN32
@@ -11,6 +12,26 @@
 #endif
 
 namespace crawl {
+namespace {
+
+std::string environmentValue(const char* name) {
+#ifdef _WIN32
+    char* rawValue = nullptr;
+    std::size_t valueSize = 0;
+    if (_dupenv_s(&rawValue, &valueSize, name) != 0 || rawValue == nullptr) {
+        std::free(rawValue);
+        return {};
+    }
+    const std::string value(rawValue);
+    std::free(rawValue);
+    return value;
+#else
+    const char* value = std::getenv(name);
+    return value ? std::string(value) : std::string{};
+#endif
+}
+
+} // namespace
 
 std::filesystem::path ResourceLocator::executableDirectory() {
 #ifdef _WIN32
@@ -30,7 +51,8 @@ std::filesystem::path ResourceLocator::executableDirectory() {
 }
 
 std::filesystem::path ResourceLocator::assetDirectory() {
-    if (const char* overridePath = std::getenv("CRAWLMASTER_ASSET_DIR")) {
+    if (const std::string overridePath = environmentValue("CRAWLMASTER_ASSET_DIR");
+        !overridePath.empty()) {
         const std::filesystem::path path(overridePath);
         if (path.is_absolute() && std::filesystem::is_directory(path)) return path;
     }

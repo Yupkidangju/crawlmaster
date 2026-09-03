@@ -10,6 +10,7 @@
 #ifdef _WIN32
 #include <fcntl.h>
 #include <io.h>
+#include <share.h>
 #include <sys/stat.h>
 #include <windows.h>
 #else
@@ -26,8 +27,11 @@ std::atomic_bool forcePostCommitSyncFailure{false};
 
 bool syncFile(const std::filesystem::path& path) {
 #ifdef _WIN32
-    const int descriptor = _wopen(path.wstring().c_str(), _O_RDONLY | _O_BINARY);
-    if (descriptor < 0) return false;
+    int descriptor = -1;
+    if (_wsopen_s(&descriptor, path.wstring().c_str(), _O_RDONLY | _O_BINARY,
+                  _SH_DENYNO, _S_IREAD) != 0) {
+        return false;
+    }
     const bool ok = _commit(descriptor) == 0;
     _close(descriptor);
     return ok;
@@ -42,10 +46,12 @@ bool syncFile(const std::filesystem::path& path) {
 
 bool writeAndSync(const std::filesystem::path& path, const std::string& contents) {
 #ifdef _WIN32
-    const int descriptor = _wopen(path.wstring().c_str(),
-                                  _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY,
-                                  _S_IREAD | _S_IWRITE);
-    if (descriptor < 0) return false;
+    int descriptor = -1;
+    if (_wsopen_s(&descriptor, path.wstring().c_str(),
+                  _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY,
+                  _SH_DENYNO, _S_IREAD | _S_IWRITE) != 0) {
+        return false;
+    }
     std::size_t offset = 0;
     while (offset < contents.size()) {
         const unsigned int remaining = static_cast<unsigned int>(
@@ -105,9 +111,26 @@ bool syncDirectory(const std::filesystem::path& directory) {
 #endif
 }
 
-std::filesystem::path absoluteEnvPath(const char* name) {
+std::string environmentValue(const char* name) {
+#ifdef _WIN32
+    char* rawValue = nullptr;
+    std::size_t valueSize = 0;
+    if (_dupenv_s(&rawValue, &valueSize, name) != 0 || rawValue == nullptr) {
+        std::free(rawValue);
+        return {};
+    }
+    const std::string value(rawValue);
+    std::free(rawValue);
+    return value;
+#else
     const char* value = std::getenv(name);
-    if (!value || *value == '\0') return {};
+    return value ? std::string(value) : std::string{};
+#endif
+}
+
+std::filesystem::path absoluteEnvPath(const char* name) {
+    const std::string value = environmentValue(name);
+    if (value.empty()) return {};
     std::filesystem::path path(value);
     return path.is_absolute() ? path : std::filesystem::path{};
 }

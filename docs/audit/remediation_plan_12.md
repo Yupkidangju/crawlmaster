@@ -1,4 +1,4 @@
-# Hosted release gate 보완 계획 — Runs 33779295660, 33780571383
+# Hosted release gate 보완 계획 — Runs 33779295660, 33780571383, 33781740992
 
 작성일: 2026-09-04 (Asia/Seoul)
 입력 감사: `audit_report_11.md`
@@ -19,6 +19,7 @@
   - `Persistence.cpp`: `_wopen`, `getenv`에 대한 C4996
   - `ResourceLocator.cpp`: `getenv`에 대한 C4996
   - `test_harness.cpp`: `size_t`를 `int`로 암시 변환한 C4267 두 건
+- Hosted run `33781740992`, Windows job `100736819048`은 위 경고를 모두 통과한 뒤 `CharacterInfoState.cpp`의 inventory 크기 두 곳에서 추가 C4267이 드러나 build 후반에 중단됐다.
 
 ## 변경 범위
 
@@ -28,6 +29,7 @@
 - production RNG, save schema와 runtime 동작은 변경하지 않는다.
 - Windows 파일 열기는 MSVC secure CRT의 `_wsopen_s`로 전환하고 환경 변수 읽기는 `_dupenv_s` 기반 값 복사로 전환한다.
 - 테스트의 컨테이너 크기는 `std::size_t`로 유지해 손실 가능 변환을 제거한다.
+- CharacterInfoState의 기존 `int` UI index 계약과 비교하는 inventory 크기는 명시적 경계 변환으로 의도를 고정한다.
 
 ## 검증 기준
 

@@ -23,7 +23,7 @@ void CharacterInfoState::handleInput(const sf::Event& event) {
     if (event.type == sf::Event::KeyPressed) {
         auto& party = m_game.getParty();
         int memberCount = party.getMemberCount();
-        int invCount = party.getInventory().size();
+        const int invCount = static_cast<int>(party.getInventory().size());
 
         switch (event.key.code) {
             case sf::Keyboard::Escape:
@@ -199,7 +199,7 @@ void CharacterInfoState::draw(sf::RenderWindow& window) {
     drawText(window, LocalizationManager::getInstance().get("TOWN_GOLD") + ": " + std::to_string(party.getGold()) + " G", 554.0f, 150.0f, 12, amber);
 
     const auto& inv = party.getInventory();
-    int invSize = inv.size();
+    const int invSize = static_cast<int>(inv.size());
 
     float itemStartY = 180.0f;
     float itemSpacing = 22.0f;

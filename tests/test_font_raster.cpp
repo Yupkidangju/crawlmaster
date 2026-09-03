@@ -88,7 +88,7 @@ int main(int argc, char* argv[]) {
             const unsigned int size = localization.getScaledTextSize(16);
             const sf::Glyph replacementGlyph = font.getGlyph(0x10FFFFU, size, false);
             sf::RenderTexture canvas;
-            CHECK(canvas.create(1600, 900));
+            CHECK(canvas.create(1024, 768));
             canvas.clear(sf::Color(5, 11, 5));
             float y = 24.0f;
             for (const auto& sample : samples) {

@@ -1,4 +1,4 @@
-# Hosted release gate 보완 계획 — Runs 33779295660, 33780571383, 33781740992, 33782865463
+# Hosted release gate 보완 계획 — Runs 33779295660, 33780571383, 33781740992, 33782865463, 33783852397
 
 작성일: 2026-09-04 (Asia/Seoul)
 입력 감사: `audit_report_11.md`
@@ -21,6 +21,7 @@
   - `test_harness.cpp`: `size_t`를 `int`로 암시 변환한 C4267 두 건
 - Hosted run `33781740992`, Windows job `100736819048`은 위 경고를 모두 통과한 뒤 `CharacterInfoState.cpp`의 inventory 크기 두 곳에서 추가 C4267이 드러나 build 후반에 중단됐다.
 - Hosted run `33782865463`, Windows job `100740514064`은 위 경고를 통과한 뒤 `CombatState.cpp`의 대상 순환 연산에서 `size_t` 결과를 `int` index에 대입한 C4267 한 건으로 중단됐다. 동일한 index 계약을 쓰는 좌·우 대상 순환과 turn 순환을 함께 정렬한다.
+- Hosted run `33783852397`, Windows job `100743759955`은 MSVC `/W4 /WX` 전체 build를 성공했다. CTest는 multi-config의 `Release/` 실행 파일이 `build/ci/assets`를 찾지 못했고, hosted software OpenGL이 NPOT 1600×900 canvas를 2048×1024 texture로 올리며 1024px 한도를 초과해 5개가 실패했다. 저장 회귀는 읽기 전용 descriptor에 `_commit`을 호출한 Windows sync 구현에서 백업 회전이 실패했다.
 
 ## 변경 범위
 
@@ -32,6 +33,9 @@
 - 테스트의 컨테이너 크기는 `std::size_t`로 유지해 손실 가능 변환을 제거한다.
 - CharacterInfoState의 기존 `int` UI index 계약과 비교하는 inventory 크기는 명시적 경계 변환으로 의도를 고정한다.
 - CombatState의 기존 `int` UI/turn index 계약에 맞춰 vector 크기를 연산 전에 명시적으로 변환한다.
+- ResourceLocator는 multi-config 실행 디렉터리의 형제 `assets`를 build-tree 후보로 허용하고, Windows backup sync descriptor는 실제 flush가 가능한 write access로 연다.
+- Font raster canvas는 제품 기준 해상도이자 software OpenGL 한도 내인 1024×768로 사용하고 Windows에서도 production state raster CTest를 등록한다.
+- package artifact 업로드를 attestation 앞에 두어, 계정 plan의 attestation 가용성과 무관하게 성공한 test/package/startup/SBOM 증거를 보존한다.
 
 ## 검증 기준
 

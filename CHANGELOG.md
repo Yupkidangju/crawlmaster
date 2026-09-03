@@ -10,6 +10,7 @@
 * Linux hosted runner에서 production-linked RNG Continue test가 DISPLAY 부재로 중단되지 않도록 해당 CTest를 Xvfb 경로에 연결했다. Windows는 기존 직접 실행 경로를 유지한다.
 * Windows hosted gate가 MSYS2 MinGW를 우연히 선택하지 않도록 Visual Studio 17 2022 x64 generator와 명시적 Release config를 사용한다.
 * MSVC `/W4 /WX`를 유지하면서 Windows persistence/resource 경로의 deprecated CRT 호출을 secure CRT로 교체하고 테스트·CharacterInfo inventory·Combat 대상/turn index 경계의 암시적 손실 가능 정수 변환을 제거했다.
+* Visual Studio multi-config build의 형제 assets 탐색과 Windows writable flush를 추가하고 font raster를 1024×768 software-renderer 한도에 맞췄다. 성공한 package/SBOM artifact는 attestation 단계보다 먼저 업로드한다.
 
 ### Re-audit 11 remediation
 * 공격형 Skill을 일반 공격과 동일한 `CombatRules` 명중/Bless/natural roll/무기 dice/type/Skeleton mitigation 경로로 통합했다.

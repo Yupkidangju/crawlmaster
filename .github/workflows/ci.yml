@@ -107,6 +107,13 @@ jobs:
           output-format: json
           output-file: build/ci/package/Crawlmaster-${{ runner.os }}-grype.json
 
+      - name: Upload package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: Crawlmaster-${{ runner.os }}
+          path: build/ci/package/Crawlmaster-*
+          if-no-files-found: error
+
       - name: Attest package build provenance
         if: github.event_name != 'pull_request'
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
@@ -123,10 +130,3 @@ jobs:
             build/ci/package/Crawlmaster-*.tar.gz
             build/ci/package/Crawlmaster-*.zip
           sbom-path: build/ci/package/Crawlmaster-${{ runner.os }}-artifact.spdx.json
-
-      - name: Upload package
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: Crawlmaster-${{ runner.os }}
-          path: build/ci/package/Crawlmaster-*
-          if-no-files-found: error

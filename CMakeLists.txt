@@ -278,6 +278,9 @@ add_dependencies(UiStateRasterTests Assets)
 if(XVFB_RUN_EXECUTABLE)
     add_test(NAME UiStateRasterTests COMMAND ${XVFB_RUN_EXECUTABLE} -a
         $<TARGET_FILE:UiStateRasterTests> "${CMAKE_CURRENT_BINARY_DIR}/ui-state-raster-evidence")
+else()
+    add_test(NAME UiStateRasterTests COMMAND $<TARGET_FILE:UiStateRasterTests>
+        "${CMAKE_CURRENT_BINARY_DIR}/ui-state-raster-evidence")
 endif()
 if(XVFB_RUN_EXECUTABLE)
     add_test(NAME ControllerContractTests

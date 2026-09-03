@@ -28,8 +28,8 @@ std::atomic_bool forcePostCommitSyncFailure{false};
 bool syncFile(const std::filesystem::path& path) {
 #ifdef _WIN32
     int descriptor = -1;
-    if (_wsopen_s(&descriptor, path.wstring().c_str(), _O_RDONLY | _O_BINARY,
-                  _SH_DENYNO, _S_IREAD) != 0) {
+    if (_wsopen_s(&descriptor, path.wstring().c_str(), _O_WRONLY | _O_BINARY,
+                  _SH_DENYNO, _S_IWRITE) != 0) {
         return false;
     }
     const bool ok = _commit(descriptor) == 0;

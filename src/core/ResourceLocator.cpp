@@ -60,6 +60,7 @@ std::filesystem::path ResourceLocator::assetDirectory() {
     const auto executable = executableDirectory();
     const std::array candidates = {
         executable / "assets",
+        executable / ".." / "assets",
         executable / ".." / "share" / "crawlmaster" / "assets"
     };
     for (const auto& candidate : candidates) {

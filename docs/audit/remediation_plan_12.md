@@ -1,4 +1,4 @@
-# Hosted release gate 보완 계획 — Runs 33779295660, 33780571383, 33781740992, 33782865463, 33783852397, 33785119322
+# Hosted release gate 보완 계획 — Runs 33779295660, 33780571383, 33781740992, 33782865463, 33783852397, 33785119322, 33786241695
 
 작성일: 2026-09-04 (Asia/Seoul)
 입력 감사: `audit_report_11.md`
@@ -23,6 +23,7 @@
 - Hosted run `33782865463`, Windows job `100740514064`은 위 경고를 통과한 뒤 `CombatState.cpp`의 대상 순환 연산에서 `size_t` 결과를 `int` index에 대입한 C4267 한 건으로 중단됐다. 동일한 index 계약을 쓰는 좌·우 대상 순환과 turn 순환을 함께 정렬한다.
 - Hosted run `33783852397`, Windows job `100743759955`은 MSVC `/W4 /WX` 전체 build를 성공했다. CTest는 multi-config의 `Release/` 실행 파일이 `build/ci/assets`를 찾지 못했고, hosted software OpenGL이 NPOT 1600×900 canvas를 2048×1024 texture로 올리며 1024px 한도를 초과해 5개가 실패했다. 저장 회귀는 읽기 전용 descriptor에 `_commit`을 호출한 Windows sync 구현에서 백업 회전이 실패했다.
 - Hosted run `33785119322`, Windows job `100747900848`은 MSVC build, CTest 13/13, install, ZIP/checksum/resource verify와 arbitrary-CWD 5초 startup을 통과했다. 이어 SBOM generator가 PowerShell 기본 PATH에서 `dumpbin`을 찾지 못해 artifact 생성 전 중단됐다.
+- Hosted run `33786241695`은 source `4f988483bf5cbcfdce4c79a6aabab4a67a7043f9`에서 Ubuntu/Windows build, CTest 13/13, package, checksum, resource/startup smoke, custom/Syft SBOM, Grype와 artifact upload를 모두 통과했다. 두 job은 마지막 GitHub native attestation persistence만 user-owned private repository plan 제한으로 실패했다.
 
 ## 변경 범위
 

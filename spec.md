@@ -12,7 +12,7 @@
 * **플랫폼/기술:** C++20, SFML (Simple and Fast Multimedia Library)를 이용한 그래픽/입력 처리 및 1인칭 와이어프레임 소프트웨어 3D 렌더링.
 * **현재 제품 lane:** 정식 출시 이전의 **한 층짜리 상용 데모 후보**. Early Access 및 1.0 출시 완료를 주장하지 않는다.
 * **대상 사용자:** 키보드 중심의 고전 던전 탐험, 파티 구성, 턴제 d20 전투를 선호하는 싱글 플레이 사용자.
-* **검증 플랫폼:** Ubuntu 24.04 x86_64와 그 ABI/runtime 요구사항을 충족하는 Linux. X11/Xrandr/Xcursor/udev/FreeType/OpenGL 런타임이 필요하다. Windows 10/11은 hosted CI와 실기 패키지 검증 전까지 `UNVERIFIED`, macOS는 현재 범위 밖이다.
+* **검증 플랫폼:** Ubuntu 24.04 x86_64와 그 ABI/runtime 요구사항을 충족하는 Linux. X11/Xrandr/Xcursor/udev/FreeType/OpenGL 런타임이 필요하다. Windows Server 2022 hosted MSVC build/test/package/startup은 source `4f988483bf5cbcfdce4c79a6aabab4a67a7043f9`에서 검증했다. clean Windows 10/11의 VC++ runtime 전제, high-DPI와 장시간 실기는 `UNVERIFIED`, macOS는 현재 범위 밖이다.
 * **가격 정책:** 미정(TBD). 배포·권리·접근성 gate가 닫히기 전에는 유료 출시 가능 상태로 표시하지 않는다.
 * **주요 목표:** 마을 정비 -> 한 층 탐험 -> 랜드마크/보상 -> 최종 전투 -> 결과 화면으로 이어지는 완결 가능한 수직 슬라이스와 D&D 5e 스타일 캐릭터 시뮬레이션.
 
@@ -35,7 +35,7 @@
   * 던전의 랜드마크와 최종 목표에 도달하여 보스 전투를 끝내고 결과 화면을 확인할 수 있다. 한 런의 설계 목표는 30~60분이며 실제 플레이테스트 전까지 이 수치는 `UNVERIFIED`다.
   * 타이틀에서 New Game과 Continue가 분리되고, 파괴적 초기화는 확인 전에는 실행되지 않는다.
   * 타이틀 화면 및 게임 플레이 도중 설정(Settings) 화면에 진입할 수 있으며(단축키: O키), 5개 국어(한국어, 영어, 일본어, 중국어 번체/간체) i18n 실시간 전환과 조작 가이드를 제공한다.
-  * Debug/Release 빌드, 등록된 CTest, Linux 재배치 패키지 smoke가 모두 통과해야 데모 후보로 판정한다. Windows는 별도 hosted/실기 gate를 통과해야 지원 플랫폼으로 승격한다.
+  * Debug/Release 빌드, 등록된 CTest, Linux 재배치 패키지 smoke가 모두 통과해야 데모 후보로 판정한다. Windows hosted gate는 통과했지만 clean Windows 10/11 runtime과 실제 high-DPI/장시간 실기 gate 전에는 상용 지원 플랫폼 PASS로 승격하지 않는다.
 
 ## 4. 비목표 (Non-Goals)
 * 실시간 3D 그래픽스 및 텍스처 매핑 (와이어프레임 3D 및 단순 평면 드로잉만 적용).
@@ -498,7 +498,7 @@ public:
   ```
 * 테스트는 `assert`에 의존하지 않는 Release-safe expectation을 사용한다. 의도적 실패는 non-zero exit로 검증한다.
 * Linux 패키지는 임의의 process CWD에서 기동하고 bundled asset을 찾을 수 있어야 한다.
-* Windows 패키지는 hosted CI artifact와 실기 smoke가 모두 없으면 `UNVERIFIED`다.
+* Windows package는 hosted Windows Server 2022 CI artifact와 5초 startup을 통과했다. 번들되지 않은 MSVC runtime이 없는 clean Windows 10/11 및 실제 high-DPI/장시간 실기는 별도 `UNVERIFIED` gate다.
 
 ## 17. Turn 1 감사 remediation 계약
 

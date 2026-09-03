@@ -1,14 +1,14 @@
 # audit_roadmap.md (Turn 2 재감사 후 출시 gate)
 
-작성일: 2026-09-03 (Asia/Seoul)  
+작성일: 2026-09-04 (Asia/Seoul)
 근거: `docs/multi_audit/1/final_audit_report_1.md`, 현재 `spec.md`, 실제 소스와 변경 전 Debug/Release/CTest 실행
 
 이 문서는 과거 Phase 완료 목록이 아니라 현재 데모 후보가 다음 gate를 통과할 수 있는지 판정한다. Turn 1의 원본 감사 보고서는 수정하지 않는다.
 
 현재 독립 결과: `docs/audit/audit_report_10.md`  
-현재 수정 계획: `docs/audit/remediation_plan_11.md`  
-최신 재감사: `docs/audit/audit_report_11.md`  
-현재 구현 상태: **로컬 Needs Fix 0, FIN-F014 hosted Windows와 FIN-F015 attestation/legal 외부 gate 잔존**
+현재 수정 계획: `docs/audit/remediation_plan_12.md`
+최신 재감사: `docs/audit/audit_report_12.md`
+현재 구현 상태: **로컬 Needs Fix 0, FIN-F014 hosted gate 해소, FIN-F015 attestation/legal과 사람 실행 evidence 잔존**
 
 ## 1. 변경 전 기준선
 
@@ -66,6 +66,6 @@
 ### PASS 전 필수
 
 - FIN-F009: Linux 5-locale × 3-scale production raster는 확보. 실제 OS high-DPI와 모든 장시간 동적 overlay 판독
-- FIN-F014: hosted Ubuntu/Windows artifact와 Windows 실기 smoke
+- FIN-F014: hosted Ubuntu/Windows artifact와 Windows MSVC CTest/package/5초 startup은 완료. clean Windows 10/11 VC++ runtime 조건은 잔여 위험
 - FIN-F015: 폰트 provenance/SBOM/scanner 구성은 확보. hosted signature/attestation와 legal/support human sign-off
 - 실제 30~60분 완주와 여러 seed의 정량 밸런스 측정

@@ -122,7 +122,7 @@
 * **결정:** 현재 제품은 1.0 또는 Early Access가 아니라 Linux x86_64 기준 한 층짜리 상용 데모 후보로 관리한다.
 * **배경:** 단일 재생성 미로에는 목표와 엔딩이 없어 기술 Phase 완료가 제품 완료로 잘못 표현됐다.
 * **대안 및 기각 사유:** 다층 정식 게임을 즉시 구현하는 안은 저장·콘텐츠·UI·패키지 경계를 동시에 넓혀 검증 단위를 무너뜨리므로 기각했다.
-* **결과:** 한 런은 30~60분 설계 목표로 시작 계단, 랜드마크 문, 보스 관문, Dragon Whelp, 결과 화면을 포함한다. 플레이 시간은 실제 측정 전까지 `UNVERIFIED`다. Windows는 hosted/실기 gate 전까지 지원 주장하지 않고 macOS는 범위 밖이다.
+* **결과:** 한 런은 30~60분 설계 목표로 시작 계단, 랜드마크 문, 보스 관문, Dragon Whelp, 결과 화면을 포함한다. 플레이 시간은 실제 측정 전까지 `UNVERIFIED`다. Windows Server 2022 hosted gate는 통과했지만 clean Windows 10/11/high-DPI/장시간 실기 전에는 상용 지원을 주장하지 않고 macOS는 범위 밖이다.
 
 ## 10. 세션 RNG와 전투 규칙 진실원
 
@@ -141,7 +141,7 @@
 
 * **결정:** SFML 2.6.1과 nlohmann/json 3.11.3을 immutable commit으로 고정하고 정적 링크 기반 CMake install/CPack 패키지를 만든다.
 * **배경:** 시스템 SFML 우선 탐색과 개발 build tree RUNPATH는 동일 소스가 다른 산출물을 만들고 재배치를 막았다.
-* **결과:** Linux TGZ와 Windows ZIP을 대상으로 CTest와 package smoke를 CI에 둔다. 폰트 provenance와 법률/지원 주체는 사람 승인 전까지 별도 차단 gate다.
+* **결과:** Linux TGZ와 Windows ZIP을 대상으로 CTest와 package smoke를 CI에 두며 run `33786241695`에서 양쪽 artifact를 검증했다. GitHub native attestation은 private plan 제한으로 발급되지 않았고 폰트 provenance와 별개인 법률/지원 주체는 사람 승인 전까지 차단 gate다.
 
 ## 13. 저장 가능한 RNG 위치와 공통 전투/i18n 경계
 

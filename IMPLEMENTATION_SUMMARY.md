@@ -75,7 +75,8 @@ main
 
 ## 5. 미검증/잔여 gate
 
-- Windows hosted MSVC build/test/attestation와 실기 startup: `UNVERIFIED`
+- Windows Server 2022 hosted MSVC build/test/package/5초 startup: run `33786241695`에서 Verified
+- GitHub native build/SBOM attestation, clean Windows 10/11 VC++ runtime 및 high-DPI/장시간 실기: `UNVERIFIED`
 - 30~60분 완주 시간과 장기 밸런스: `UNVERIFIED`
 - 5 locale × 3 scale production state/substate raster는 Linux에서 생성·판독. OS high-DPI는 `UNVERIFIED`
 - 폰트 hash/upstream/license는 `FONT_PROVENANCE.md`로 검증. 제품 legal/support identity는 `Human Review Required`

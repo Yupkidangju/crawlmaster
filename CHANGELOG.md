@@ -56,7 +56,7 @@
 * `testTownHubLocalizationKeyCoverage` 회귀 테스트를 추가해 Town 허브의 9개 필수 키가 한국어·영어·일본어·중국어 번체·중국어 간체에 모두 존재하는지 검증한다.
 
 ### Changed (변경됨)
-* 기존 `hasGlyph` 검증은 실제 화면 가독성의 보증이 아니라 코드포인트 보조 검사임을 명확히 한다. CJK 혼합 문자열 렌더링과 폰트 provenance 검증은 `audit_report_8.md`의 미해결 릴리즈 게이트로 유지한다.
+* 기존 `hasGlyph` 검증은 실제 화면 가독성의 보증이 아니라 코드포인트 보조 검사임을 명확히 한다. CJK 혼합 문자열 렌더링과 폰트 provenance 검증은 `docs/audit/audit_report_8.md`의 미해결 릴리즈 게이트로 유지한다.
 
 ---
 

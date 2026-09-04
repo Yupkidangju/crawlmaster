@@ -1,6 +1,6 @@
 # BUILD_GUIDE.md (빌드·테스트·패키지 가이드)
 
-작성 기준: 2026-09-03, Crawlmaster 0.9.4 pre-release demo candidate
+작성 기준: 2026-09-04, Crawlmaster 0.10.0 pre-release demo candidate
 
 ## 1. 요구사항
 
@@ -115,7 +115,7 @@ python3 scripts/generate_release_sbom.py \
 grype sbom:build/release/package/Crawlmaster-Linux-artifact.spdx.json --fail-on high
 ```
 
-- Windows Server 2022 hosted MSVC build, CTest 13/13, ZIP/checksum/resource/startup, SBOM와 Grype high gate는 source `4f988483bf5cbcfdce4c79a6aabab4a67a7043f9`의 run `33786241695` attempt 2에서 통과했다.
-- 같은 attempt에서 Linux/Windows SLSA provenance와 SPDX 2.3 SBOM attestation을 발급하고 GitHub CLI bundle 검증을 통과했다. URL과 명령 증거는 `docs/audit/audit_report_13.md`에 기록했다.
+- source `4f988483bf5cbcfdce4c79a6aabab4a67a7043f9`의 run `33786241695` attempt 2는 0.9.4 historical evidence다.
+- current v0.10 immutable commit의 hosted Windows MSVC/ZIP/startup과 SLSA/SPDX attestation은 재실행 전까지 `UNVERIFIED`다.
 - macOS는 현재 범위 밖이다.
 - 폰트의 byte identity/upstream/license/raster는 `FONT_PROVENANCE.md`로 닫았다. 제품 법률/지원 주체는 Human Review 전까지 유료 배포를 차단한다.

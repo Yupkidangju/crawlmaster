@@ -5,6 +5,7 @@
 #include "model/Character.hpp"
 #include "model/ItemFactory.hpp"
 #include "model/SkillFactory.hpp"
+#include "model/CharacterIdentityRules.hpp"
 #include "core/SessionRng.hpp"
 #include "core/LocalizationManager.hpp"
 #include <algorithm>
@@ -14,20 +15,28 @@
 namespace crawl {
 
 Character::Character(std::string name, CharacterClass charClass)
-    : Character(std::move(name), charClass, true) {}
+    : Character(CharacterIdentity{std::move(name), 0, Gender::UNSPECIFIED, charClass}, true) {}
 
-Character::Character(std::string name, CharacterClass charClass, bool initializeRandomState)
-    : m_name(std::move(name)), m_class(charClass), m_level(1), m_xp(0),
+Character::Character(CharacterIdentity identity, AbilityScore abilities)
+    : Character(std::move(identity), false) {
+    m_abilities = abilities;
+    initializeLevelOneState();
+}
+
+Character::Character(CharacterIdentity identity, bool initializeRandomState)
+    : m_name(std::move(identity.name)), m_age(identity.age), m_gender(identity.gender),
+      m_class(identity.characterClass), m_level(1), m_xp(0),
       m_hp(10), m_maxHp(10), m_spellSlots(0), m_maxSpellSlots(0),
       m_poisonTurns(0), m_paralysisTurns(0),
       m_strBuffTurns(0), m_strBuffAmount(0),
       m_dexBuffTurns(0), m_dexBuffAmount(0),
       m_blessTurns(0) {
     if (!initializeRandomState) return;
-    // 1. 주사위 롤링으로 6대 능력치 초기화
     rollAbilities();
+    initializeLevelOneState();
+}
 
-    // 2. 클래스별 기본 HP 및 스펠 슬롯 셋업 (D&D 5e 기준)
+void Character::initializeLevelOneState() {
     int conMod = getAbilities().getModifier(m_abilities.constitution);
     int hitDie = getHitDieSides();
     m_maxHp = std::max(4, hitDie + conMod); // 최소 1레벨 HP는 4 이상 보장
@@ -38,7 +47,7 @@ Character::Character(std::string name, CharacterClass charClass, bool initialize
         m_spellSlots = m_maxSpellSlots;
     }
 
-    // 3. 클래스별 D&D 초기 기본 장비 지급 및 자동 장착
+    // 클래스별 D&D 초기 기본 장비 지급 및 자동 장착
     if (m_class == CharacterClass::WARRIOR) {
         equip(std::dynamic_pointer_cast<Equipment>(ItemFactory::createItem("wpn_longsword")));
         equip(std::dynamic_pointer_cast<Equipment>(ItemFactory::createItem("arm_scale")));
@@ -54,7 +63,6 @@ Character::Character(std::string name, CharacterClass charClass, bool initialize
         equip(std::dynamic_pointer_cast<Equipment>(ItemFactory::createItem("shd_round")));
     }
 
-    // 4. [v0.8.0] 현재 레벨에 따른 스킬 초기 배포 습득
     initSkillsForLevel();
 }
 
@@ -106,6 +114,10 @@ int Character::getAc() const {
     // 방패 추가 AC 보너스 반영
     if (m_equippedShield) {
         baseAc += m_equippedShield->getAcBonus();
+    }
+
+    if (m_class == CharacterClass::WARRIOR && m_equippedArmor) {
+        baseAc += 1;
     }
 
     return baseAc;
@@ -212,6 +224,8 @@ bool Character::isDead() const {
 }
 
 std::string Character::getName() const { return m_name; }
+int Character::getAge() const { return m_age; }
+Gender Character::getGender() const { return m_gender; }
 CharacterClass Character::getClass() const { return m_class; }
 
 std::string Character::getClassString() const {
@@ -308,6 +322,9 @@ int Character::getStrBuffAmount() const {
 int Character::getDexBuffAmount() const {
     return m_dexBuffTurns > 0 ? m_dexBuffAmount : 0;
 }
+
+int Character::getStrBuffTurns() const { return m_strBuffTurns; }
+int Character::getDexBuffTurns() const { return m_dexBuffTurns; }
 
 int Character::getBlessTurns() const {
     return m_blessTurns;
@@ -406,6 +423,13 @@ int Character::getHitDieSides() const {
 nlohmann::json Character::toJson() const {
     nlohmann::json j;
     j["name"] = m_name;
+    j["age"] = m_age;
+    switch (m_gender) {
+        case Gender::MALE: j["gender"] = "male"; break;
+        case Gender::FEMALE: j["gender"] = "female"; break;
+        case Gender::NON_BINARY: j["gender"] = "non_binary"; break;
+        case Gender::UNSPECIFIED: j["gender"] = "unspecified"; break;
+    }
     j["class"] = static_cast<int>(m_class);
     j["level"] = m_level;
     j["xp"] = m_xp;
@@ -439,8 +463,22 @@ nlohmann::json Character::toJson() const {
 
 std::unique_ptr<Character> Character::fromJson(const nlohmann::json& j, int schemaVersion) {
     if (!j.is_object()) throw std::runtime_error("character는 객체여야 합니다.");
+    if (schemaVersion >= 4) {
+        static const std::vector<std::string> required = {
+            "name", "age", "gender", "class", "level", "xp", "hp", "maxHp",
+            "spellSlots", "maxSpellSlots", "poisonTurns", "paralysisTurns",
+            "abilities", "equipment"};
+        for (const auto& key : required) {
+            if (!j.contains(key)) throw std::runtime_error("v4 character 필수 필드 누락: " + key);
+        }
+    }
 
-    const std::string name = j.at("name").get<std::string>();
+    const std::string serializedName = j.at("name").get<std::string>();
+    const auto normalizedName = CharacterIdentityRules::normalizeName(serializedName);
+    if (!normalizedName || (schemaVersion >= 3 && *normalizedName != serializedName)) {
+        throw std::runtime_error("character name 형식이 잘못됐습니다.");
+    }
+    const std::string name = *normalizedName;
     const int classValue = j.at("class").get<int>();
     const int level = j.at("level").get<int>();
     const int xp = j.at("xp").get<int>();
@@ -451,8 +489,11 @@ std::unique_ptr<Character> Character::fromJson(const nlohmann::json& j, int sche
     const int maxSpellSlots = j.at(canonical ? "maxSpellSlots" : "max_spell_slots").get<int>();
     const int poisonTurns = j.value(canonical ? "poisonTurns" : "poison_turns", 0);
     const int paralysisTurns = j.value(canonical ? "paralysisTurns" : "paralysis_turns", 0);
+    const int age = schemaVersion >= 3 ? j.at("age").get<int>() : 0;
+    const std::string genderValue = schemaVersion >= 3
+        ? j.at("gender").get<std::string>() : "unspecified";
 
-    if (name.empty() || name.size() > 64) throw std::runtime_error("character name 길이가 잘못됐습니다.");
+    if (age != 0 && (age < 18 || age > 80)) throw std::runtime_error("character age 범위를 벗어났습니다.");
     if (classValue < 0 || classValue > 3) throw std::runtime_error("character class가 잘못됐습니다.");
     if (level < 1 || level > 3) throw std::runtime_error("character level 범위를 벗어났습니다.");
     if (xp < 0 || xp > 1'000'000'000) throw std::runtime_error("character xp 범위를 벗어났습니다.");
@@ -462,12 +503,28 @@ std::unique_ptr<Character> Character::fromJson(const nlohmann::json& j, int sche
     if (maxSpellSlots < 0 || maxSpellSlots > 100 || spellSlots < 0 || spellSlots > maxSpellSlots) {
         throw std::runtime_error("character spell slot 범위를 벗어났습니다.");
     }
+    const bool spellcaster = classValue == static_cast<int>(CharacterClass::MAGE) ||
+                             classValue == static_cast<int>(CharacterClass::CLERIC);
+    const int expectedMaxSpellSlots = spellcaster ? level + 1 : 0;
+    if (maxSpellSlots != expectedMaxSpellSlots) {
+        throw std::runtime_error("character class/level과 최대 주문 슬롯이 일치하지 않습니다.");
+    }
     if (poisonTurns < 0 || poisonTurns > 1'000 || paralysisTurns < 0 || paralysisTurns > 1'000) {
         throw std::runtime_error("character status turn 범위를 벗어났습니다.");
     }
 
+    Gender gender = Gender::UNSPECIFIED;
+    if (genderValue == "male") gender = Gender::MALE;
+    else if (genderValue == "female") gender = Gender::FEMALE;
+    else if (genderValue == "non_binary") gender = Gender::NON_BINARY;
+    else if (genderValue != "unspecified") throw std::runtime_error("character gender 값이 잘못됐습니다.");
+    if (schemaVersion >= 3 && ((age == 0) != (gender == Gender::UNSPECIFIED))) {
+        throw std::runtime_error("character legacy identity 조합이 잘못됐습니다.");
+    }
+
     auto charClass = static_cast<CharacterClass>(classValue);
-    auto character = std::unique_ptr<Character>(new Character(name, charClass, false));
+    auto character = std::unique_ptr<Character>(new Character(
+        CharacterIdentity{name, age, gender, charClass}, false));
     character->m_level = level;
     character->m_xp = xp;
     character->m_hp = hp;

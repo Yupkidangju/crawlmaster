@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <nlohmann/json.hpp>
 
 namespace crawl {
 
@@ -15,6 +16,7 @@ enum class TileType {
     EMPTY,      // 빈 바닥 (이동 가능)
     DOOR,       // 문 (이동 가능)
     UPSTAIRS,   // 마을 복귀용 계단 (이동 가능)
+    DOWNSTAIRS, // 다음 층으로 내려가는 계단 (이동 가능)
     BOSS_GATE   // 최종 전투 관문 (이동 가능)
 };
 
@@ -36,8 +38,8 @@ public:
     ~DungeonMap() = default;
 
     // 미로 생성 및 플레이어 기본 스폰 위치 설정
-    void generate();
     void generate(std::uint32_t seed);
+    void generate(std::uint32_t seed, int floorNumber);
 
     // 특정 타일 좌표의 타입 반환
     TileType getTile(int x, int y) const;
@@ -61,6 +63,11 @@ public:
     int getPlayerY() const;
     Direction getPlayerDir() const;
     int getProgressPercent() const;
+    int getDistanceFromStart(int x, int y) const;
+
+    nlohmann::json toJson() const;
+    static DungeonMap fromJson(const nlohmann::json& json, int floorNumber);
+    void validateForFloor(int floorNumber) const;
 
     void setPlayerPos(int x, int y);
     void setPlayerDir(Direction dir);
@@ -86,7 +93,8 @@ private:
     void generateDFS(int cx, int cy, class SessionRng& random);
     // 미로의 막힌 벽을 일부 헐어 순환 루프를 만드는 함수
     void createLoops(class SessionRng& random);
-    void placeLandmarks();
+    void placeLandmarks(int floorNumber);
+    void recomputeDistances();
 };
 
 } // namespace crawl

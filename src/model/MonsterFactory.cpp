@@ -46,6 +46,10 @@ std::shared_ptr<Monster> MonsterFactory::createMonster(const std::string& id) {
         return std::make_shared<ConcreteMonster>(
             "mon_dragon_whelp", "MONSTER_MON_DRAGON_WHELP_NAME", 35, 14, 250, 1, 8, 3, 4
         );
+    } else if (id == "mon_crypt_warden") {
+        return std::make_shared<ConcreteMonster>(
+            "mon_crypt_warden", "MONSTER_MON_CRYPT_WARDEN_NAME", 28, 14, 200, 1, 8, 3, 3
+        );
     }
     return nullptr;
 }
@@ -76,7 +80,7 @@ std::shared_ptr<Monster> MonsterFactory::createRandomMonster(EncounterTier tier,
 std::vector<std::string> MonsterFactory::getRegisteredIds() {
     return {
         "mon_kobold", "mon_goblin", "mon_skeleton", "mon_giant_spider",
-        "mon_orc", "mon_goblin_shaman", "mon_ghoul", "mon_dragon_whelp"
+        "mon_orc", "mon_goblin_shaman", "mon_ghoul", "mon_dragon_whelp", "mon_crypt_warden"
     };
 }
 

@@ -7,10 +7,11 @@
 #include "controller/TitleState.hpp"
 #include "controller/DungeonState.hpp"
 #include "controller/CharacterInfoState.hpp"
+#include "controller/CharacterCreationState.hpp"
 #include "controller/SettingsState.hpp"
+#include "controller/QuestJournalState.hpp"
 #include "core/Game.hpp"
 #include "core/LocalizationManager.hpp"
-#include "core/SessionRng.hpp"
 #include "model/ItemFactory.hpp"
 #include <iostream>
 #include <sstream>
@@ -28,6 +29,16 @@ static std::string replacePlaceholder(std::string str, const std::string& from, 
     return str;
 }
 
+static std::vector<std::string> questBoardIds(const Party& party) {
+    std::vector<std::string> ids = Quest::getOfferableIds();
+    for (const auto& active : party.getActiveQuests()) {
+        if (active && std::find(ids.begin(), ids.end(), active->getId()) == ids.end()) {
+            ids.push_back(active->getId());
+        }
+    }
+    return ids;
+}
+
 TownState::TownState(Game& game)
     : m_game(game), m_subState(TownSubState::HUB) {
     initTexts();
@@ -38,8 +49,13 @@ void TownState::handleInput(const sf::Event& event) {
     if (event.type != sf::Event::KeyPressed) return;
 
     Party& party = m_game.getParty();
+    const PartyCheckpoint inputCheckpoint = party.captureCheckpoint();
     sf::Keyboard::Key key = event.key.code;
     auto& lm = LocalizationManager::getInstance();
+    if (key == sf::Keyboard::Q) {
+        m_game.getStates().pushState(std::make_unique<QuestJournalState>(m_game));
+        return;
+    }
     if (key == sf::Keyboard::O) {
         std::cout << "[FSM] TownState에서 SettingsState로 진입합니다." << std::endl;
         m_game.getStates().pushState(std::make_unique<SettingsState>(m_game));
@@ -52,10 +68,8 @@ void TownState::handleInput(const sf::Event& event) {
             return false;
         }
         if (saveResult) return true;
-        const auto restoreResult = party.loadFromFile();
-        m_notifyMessage = restoreResult
-            ? lm.get("TOWN_MSG_SAVE_FAILED")
-            : lm.get("TOWN_MSG_SAVE_RESTORE_FAILED");
+        party.restoreCheckpoint(inputCheckpoint);
+        m_notifyMessage = lm.get("TOWN_MSG_SAVE_FAILED");
         return false;
     };
 
@@ -88,43 +102,6 @@ void TownState::handleInput(const sf::Event& event) {
     }
     // 2. 모험가 길드 분기 로직
     else if (m_subState == TownSubState::GUILD) {
-        if (m_recruitmentDraft) {
-            if (key == sf::Keyboard::R) {
-                m_recruitmentDraft->reroll();
-                m_notifyMessage = lm.get("GUILD_PREVIEW_GUIDE");
-            } else if (key == sf::Keyboard::Enter) {
-                const std::string candidateName = m_recruitmentDraft->preview().getName();
-                const CharacterClass candidateClass = m_recruitmentDraft->preview().getClass();
-                if (m_recruitmentDraft->confirm(party)) {
-                    const int addedIndex = party.getMemberCount() - 1;
-                    const auto saveResult = party.saveToFile();
-                    if (!saveResult.durabilityConfirmed()) {
-                        m_notifyMessage = lm.get("TOWN_MSG_DURABILITY_UNKNOWN");
-                        m_recruitmentDraft.reset();
-                    } else if (!saveResult) {
-                        party.removeMember(addedIndex);
-                        m_notifyMessage = lm.get("TOWN_MSG_SAVE_FAILED");
-                    } else {
-                        std::string className;
-                        switch (candidateClass) {
-                            case CharacterClass::WARRIOR: className = lm.get("CLASS_WARRIOR"); break;
-                            case CharacterClass::MAGE: className = lm.get("CLASS_MAGE"); break;
-                            case CharacterClass::ROGUE: className = lm.get("CLASS_ROGUE"); break;
-                            case CharacterClass::CLERIC: className = lm.get("CLASS_CLERIC"); break;
-                        }
-                        auto message = replacePlaceholder(lm.get("TOWN_MSG_MEMBER_CREATED"),
-                                                          "{name}", candidateName);
-                        m_notifyMessage = replacePlaceholder(message, "{class}", className);
-                        m_recruitmentDraft.reset();
-                    }
-                }
-            } else if (key == sf::Keyboard::Escape) {
-                m_recruitmentDraft.reset();
-                m_notifyMessage = lm.get("TOWN_MSG_CANCELLED");
-            }
-            updateTuiContent();
-            return;
-        }
         if (m_confirmingDismiss) {
             if (key == sf::Keyboard::Enter && party.getMemberCount() > 0) {
                 const int lastIndex = party.getMemberCount() - 1;
@@ -134,7 +111,7 @@ void TownState::handleInput(const sf::Event& event) {
                 if (!saveResult.durabilityConfirmed()) {
                     m_notifyMessage = lm.get("TOWN_MSG_DURABILITY_UNKNOWN");
                 } else if (!saveResult) {
-                    party.addMember(dismissed);
+                    party.restoreCheckpoint(inputCheckpoint);
                     m_notifyMessage = lm.get("TOWN_MSG_SAVE_FAILED");
                 } else {
                     m_notifyMessage = replacePlaceholder(lm.get("TOWN_MSG_DISBANDED"),
@@ -152,14 +129,7 @@ void TownState::handleInput(const sf::Event& event) {
             if (party.getMemberCount() >= 4) {
                 m_notifyMessage = lm.get("TOWN_MSG_PARTY_FULL");
             } else {
-                std::vector<std::string> orderedNames;
-                orderedNames.reserve(RANDOM_NAMES.size());
-                for (std::size_t offset = 0; offset < RANDOM_NAMES.size(); ++offset) {
-                    orderedNames.push_back(RANDOM_NAMES[(static_cast<std::size_t>(m_nameIndex) + offset) % RANDOM_NAMES.size()]);
-                }
-                m_nameIndex = (m_nameIndex + 1) % static_cast<int>(RANDOM_NAMES.size());
-                m_recruitmentDraft = std::make_unique<RecruitmentDraft>(SessionRng::global(), std::move(orderedNames));
-                m_notifyMessage = lm.get("GUILD_PREVIEW_GUIDE");
+                m_game.getStates().pushState(std::make_unique<CharacterCreationState>(m_game));
             }
             updateTuiContent();
         } else if (key == sf::Keyboard::Num2) {
@@ -188,21 +158,12 @@ void TownState::handleInput(const sf::Event& event) {
     }
     // 3-1. 무기 상점 구매 카탈로그 분기 로직
     else if (m_subState == TownSubState::SHOP_BUY) {
-        std::string targetId = "";
-        int price = 0;
-
-        if (key == sf::Keyboard::Num1) { targetId = "wpn_dagger";    price = 10; }
-        else if (key == sf::Keyboard::Num2) { targetId = "wpn_longsword"; price = 30; }
-        else if (key == sf::Keyboard::Num3) { targetId = "wpn_mace";      price = 20; }
-        else if (key == sf::Keyboard::Num4) { targetId = "arm_leather";   price = 15; }
-        else if (key == sf::Keyboard::Num5) { targetId = "arm_scale";     price = 45; }
-        else if (key == sf::Keyboard::Num6) { targetId = "arm_chain";     price = 75; }
-        else if (key == sf::Keyboard::Num7) { targetId = "shd_round";     price = 20; }
-        else if (key == sf::Keyboard::Num8) { targetId = "pot_heal";      price = 15; }
-
-        if (!targetId.empty()) {
+        const auto catalog = ItemFactory::getShopCatalog();
+        if (key >= sf::Keyboard::Num1 && key <= sf::Keyboard::Num8) {
+            const std::size_t index = static_cast<std::size_t>(key - sf::Keyboard::Num1);
+            const auto purchasedItem = catalog[index];
+            const int price = purchasedItem->getGoldValue();
             if (party.spendGold(price)) {
-                auto purchasedItem = ItemFactory::createItem(targetId);
                 party.addItem(purchasedItem);
                 if (persistTownChange()) {
                     std::string purchasedMsg = lm.get("TOWN_MSG_PURCHASED");
@@ -232,8 +193,7 @@ void TownState::handleInput(const sf::Event& event) {
                     if (!saveResult.durabilityConfirmed()) {
                         m_notifyMessage = lm.get("TOWN_MSG_DURABILITY_UNKNOWN");
                     } else if (!saveResult) {
-                        party.addGold(-sellPrice);
-                        party.insertItem(m_pendingSaleIndex, item);
+                        party.restoreCheckpoint(inputCheckpoint);
                         m_notifyMessage = lm.get("TOWN_MSG_SAVE_FAILED");
                     } else {
                         auto soldMessage = replacePlaceholder(lm.get("TOWN_MSG_SOLD"), "{name}", item->getName());
@@ -290,74 +250,34 @@ void TownState::handleInput(const sf::Event& event) {
     }
     // 5. 영주 성/퀘스트 보드 분기 로직
     else if (m_subState == TownSubState::CASTLE) {
-        if (key == sf::Keyboard::Num1) {
-            // 코볼트 소탕 퀘스트
-            std::string qId = "qst_clear_kobolds";
-            if (party.isQuestCompleted(qId)) {
+        const std::vector<std::string> questIds = questBoardIds(party);
+        if (key == sf::Keyboard::Up && !questIds.empty()) {
+            m_questSelection = (m_questSelection + static_cast<int>(questIds.size()) - 1) %
+                static_cast<int>(questIds.size());
+        } else if (key == sf::Keyboard::Down && !questIds.empty()) {
+            m_questSelection = (m_questSelection + 1) % static_cast<int>(questIds.size());
+        } else if (key == sf::Keyboard::Enter && !questIds.empty()) {
+            m_questSelection = std::clamp(m_questSelection, 0, static_cast<int>(questIds.size()) - 1);
+            const std::string& questId = questIds[static_cast<std::size_t>(m_questSelection)];
+            if (party.isQuestCompleted(questId)) {
                 m_notifyMessage = lm.get("TOWN_MSG_QUEST_ALREADY_COMPLETED");
-            } else if (!party.hasQuest(qId)) {
-                // 신규 수락
-                auto newQuest = Quest::createCanonical(qId);
-                party.acceptQuest(newQuest);
-                if (persistTownChange()) m_notifyMessage = lm.get("TOWN_MSG_QUEST_KOBOLD_ACCEPTED");
+            } else if (!party.hasQuest(questId)) {
+                party.acceptQuest(Quest::createCanonical(questId));
+                if (persistTownChange()) m_notifyMessage = lm.get("TOWN_MSG_QUEST_ACCEPTED");
             } else {
-                // 이미 수락함. 완료 여부 체크 후 보고
-                auto activeQuests = party.getActiveQuests();
-                auto it = std::find_if(activeQuests.begin(), activeQuests.end(), [&](const auto& q) { return q->getId() == qId; });
-                if (it != activeQuests.end() && (*it)->checkCompletion()) {
-                    party.completeQuest(qId);
-                    if (persistTownChange()) m_notifyMessage = lm.get("TOWN_MSG_QUEST_KOBOLD_COMPLETED");
-                } else if (it != activeQuests.end()) {
-                    m_notifyMessage = replacePlaceholder(lm.get("TOWN_MSG_QUEST_KOBOLD_PROGRESS"), "{count}", std::to_string((*it)->getCurrentCount()));
-                }
-            }
-            updateTuiContent();
-        } else if (key == sf::Keyboard::Num2) {
-            // 메이스 회수 퀘스트
-            std::string qId = "qst_collect_maces";
-            if (party.isQuestCompleted(qId)) {
-                m_notifyMessage = lm.get("TOWN_MSG_QUEST_ALREADY_COMPLETED");
-            } else if (!party.hasQuest(qId)) {
-                // 신규 수락
-                auto newQuest = Quest::createCanonical(qId);
-                party.acceptQuest(newQuest);
-                if (persistTownChange()) m_notifyMessage = lm.get("TOWN_MSG_QUEST_MACE_ACCEPTED");
-            } else {
-                // 수집 퀘스트 수집량 체크
                 party.updateQuestCollectProgress();
-                auto activeQuests = party.getActiveQuests();
-                auto it = std::find_if(activeQuests.begin(), activeQuests.end(), [&](const auto& q) { return q->getId() == qId; });
-                if (it != activeQuests.end() && (*it)->checkCompletion()) {
-                    party.completeQuest(qId);
-                    if (persistTownChange()) m_notifyMessage = lm.get("TOWN_MSG_QUEST_MACE_COMPLETED");
-                } else if (it != activeQuests.end()) {
-                    m_notifyMessage = replacePlaceholder(lm.get("TOWN_MSG_QUEST_MACE_PROGRESS"), "{count}", std::to_string((*it)->getCurrentCount()));
+                auto quest = party.getQuest(questId);
+                if (quest && quest->isReadyToReport()) {
+                    party.completeQuest(questId);
+                    if (persistTownChange()) m_notifyMessage = lm.get("TOWN_MSG_QUEST_REPORTED");
+                } else {
+                    m_notifyMessage = lm.get("TOWN_MSG_QUEST_IN_PROGRESS");
                 }
             }
-            updateTuiContent();
-        } else if (key == sf::Keyboard::Num3) {
-            const std::string qId = "qst_hunt_spiders";
-            if (party.isQuestCompleted(qId)) {
-                m_notifyMessage = lm.get("TOWN_MSG_QUEST_ALREADY_COMPLETED");
-            } else if (!party.hasQuest(qId)) {
-                party.acceptQuest(Quest::createCanonical(qId));
-                if (persistTownChange()) m_notifyMessage = lm.get("TOWN_MSG_QUEST_SPIDER_ACCEPTED");
-            } else {
-                auto activeQuests = party.getActiveQuests();
-                auto it = std::find_if(activeQuests.begin(), activeQuests.end(),
-                    [&](const auto& quest) { return quest->getId() == qId; });
-                if (it != activeQuests.end() && (*it)->checkCompletion()) {
-                    party.completeQuest(qId);
-                    if (persistTownChange()) m_notifyMessage = lm.get("TOWN_MSG_QUEST_SPIDER_COMPLETED");
-                } else if (it != activeQuests.end()) {
-                    m_notifyMessage = replacePlaceholder(lm.get("TOWN_MSG_QUEST_SPIDER_PROGRESS"),
-                                                         "{count}", std::to_string((*it)->getCurrentCount()));
-                }
-            }
-            updateTuiContent();
         } else if (key == sf::Keyboard::Escape) {
             setSubState(TownSubState::HUB);
         }
+        updateTuiContent();
     }
 }
 
@@ -447,18 +367,6 @@ void TownState::updateTuiContent() {
                     << lm.get("GUILD_CREATE") << "\n"
                     << lm.get("GUILD_DISMISS") << "\n\n"
                     << "ESC. " << lm.get("GUILD_BACK");
-            if (m_recruitmentDraft) {
-                const auto& candidate = m_recruitmentDraft->preview();
-                std::string className;
-                switch (candidate.getClass()) {
-                    case CharacterClass::WARRIOR: className = lm.get("CLASS_WARRIOR"); break;
-                    case CharacterClass::MAGE: className = lm.get("CLASS_MAGE"); break;
-                    case CharacterClass::ROGUE: className = lm.get("CLASS_ROGUE"); break;
-                    case CharacterClass::CLERIC: className = lm.get("CLASS_CLERIC"); break;
-                }
-                menuOss << "\n\n" << lm.get("GUILD_CANDIDATE") << ": " << candidate.getName()
-                        << " / " << className << "\n" << lm.get("GUILD_PREVIEW_GUIDE");
-            }
             break;
 
         case TownSubState::SHOP:
@@ -473,12 +381,9 @@ void TownState::updateTuiContent() {
             m_titleText.setString(lm.getSf("SHOP_TITLE"));
             menuOss << lm.get("SHOP_CATALOG") << "\n\n";
             {
-                const std::array<const char*, 8> catalogIds = {
-                    "wpn_dagger", "wpn_longsword", "wpn_mace", "arm_leather",
-                    "arm_scale", "arm_chain", "shd_round", "pot_heal"
-                };
-                for (std::size_t index = 0; index < catalogIds.size(); ++index) {
-                    const auto item = ItemFactory::createItem(catalogIds[index]);
+                const auto catalog = ItemFactory::getShopCatalog();
+                for (std::size_t index = 0; index < catalog.size(); ++index) {
+                    const auto& item = catalog[index];
                     menuOss << (index + 1) << ". " << item->getName()
                             << " - " << item->getGoldValue() << " G\n";
                 }
@@ -515,57 +420,30 @@ void TownState::updateTuiContent() {
 
         case TownSubState::CASTLE:
             m_titleText.setString(lm.getSf("CASTLE_TITLE"));
-            
-            // 퀘스트 상태 다국어 대응
-            std::string q1Status = lm.get("CASTLE_ACCEPT_KOBOLD");
-            std::string q2Status = lm.get("CASTLE_ACCEPT_MACE");
-            std::string q3Status = lm.get("CASTLE_ACCEPT_SPIDER");
-
-            if (party.hasQuest("qst_clear_kobolds")) {
-                auto activeQ = party.getActiveQuests();
-                auto it = std::find_if(activeQ.begin(), activeQ.end(), [&](const auto& q) { return q->getId() == "qst_clear_kobolds"; });
-                if (it != activeQ.end()) {
-                    if ((*it)->checkCompletion()) {
-                        q1Status = lm.get("CASTLE_REPORT_KOBOLD");
-                    } else {
-                        q1Status = lm.get("CASTLE_PROGRESS_KOBOLD") + " (" + std::to_string((*it)->getCurrentCount()) + "/5)";
+            {
+                const std::vector<std::string> questIds = questBoardIds(party);
+                if (!questIds.empty()) m_questSelection = std::clamp(
+                    m_questSelection, 0, static_cast<int>(questIds.size()) - 1);
+                menuOss << lm.get("CASTLE_QUEST_BOARD") << "\n\n";
+                const bool compact = lm.getTextScale() > 125;
+                const std::size_t begin = compact ? static_cast<std::size_t>(m_questSelection) : 0U;
+                const std::size_t end = compact ? begin + 1U : questIds.size();
+                if (compact) menuOss << (m_questSelection + 1) << "/" << questIds.size() << "\n";
+                for (std::size_t index = begin; index < end; ++index) {
+                    auto definition = Quest::createCanonical(questIds[index]);
+                    if (!definition) continue;
+                    std::string status = lm.get("QUEST_STATUS_AVAILABLE");
+                    if (party.isQuestCompleted(definition->getId())) status = lm.get("QUEST_STATUS_COMPLETED");
+                    else if (auto active = party.getQuest(definition->getId())) {
+                        status = lm.get(active->isReadyToReport()
+                            ? "QUEST_STATUS_READY" : "QUEST_STATUS_ACTIVE");
                     }
+                    menuOss << (static_cast<int>(index) == m_questSelection ? "> " : "  ")
+                            << definition->getName() << " [" << status << "]\n"
+                            << "    " << definition->getDescription() << "\n";
                 }
+                menuOss << "\n" << lm.get("QUEST_BOARD_GUIDE") << " | ESC. " << lm.get("CASTLE_BACK");
             }
-            
-            party.updateQuestCollectProgress();
-            if (party.hasQuest("qst_collect_maces")) {
-                auto activeQ = party.getActiveQuests();
-                auto it = std::find_if(activeQ.begin(), activeQ.end(), [&](const auto& q) { return q->getId() == "qst_collect_maces"; });
-                if (it != activeQ.end()) {
-                    if ((*it)->checkCompletion()) {
-                        q2Status = lm.get("CASTLE_REPORT_MACE");
-                    } else {
-                        q2Status = lm.get("CASTLE_PROGRESS_MACE") + " (" + std::to_string((*it)->getCurrentCount()) + "/2)";
-                    }
-                }
-            }
-
-            if (party.hasQuest("qst_hunt_spiders")) {
-                auto activeQ = party.getActiveQuests();
-                auto it = std::find_if(activeQ.begin(), activeQ.end(),
-                    [&](const auto& quest) { return quest->getId() == "qst_hunt_spiders"; });
-                if (it != activeQ.end()) {
-                    q3Status = (*it)->checkCompletion()
-                        ? lm.get("CASTLE_REPORT_SPIDER")
-                        : lm.get("CASTLE_PROGRESS_SPIDER") + " (" +
-                          std::to_string((*it)->getCurrentCount()) + "/3)";
-                }
-            }
-
-            menuOss << lm.get("CASTLE_QUEST_BOARD") << "\n\n"
-                    << q1Status << "\n"
-                    << lm.get("CASTLE_DESC_KOBOLD") << "\n\n"
-                    << q2Status << "\n"
-                    << lm.get("CASTLE_DESC_MACE") << "\n\n"
-                    << q3Status << "\n"
-                    << lm.get("CASTLE_DESC_SPIDER") << "\n\n"
-                    << "ESC. " << lm.get("CASTLE_BACK");
             break;
     }
 

@@ -24,13 +24,19 @@
 namespace crawl {
 
 CombatState::CombatState(Game& game, EncounterTier tier, bool bossBattle)
+    : CombatState(game, EncounterSpec{tier, bossBattle ? "mon_dragon_whelp" : "", "", "",
+                                      bossBattle, bossBattle}) {}
+
+CombatState::CombatState(Game& game, EncounterSpec encounter)
     : m_game(game), m_currentTurnIdx(0), m_selectedTargetIdx(0),
-      m_encounterTier(tier), m_isBossBattle(bossBattle) {
+      m_encounterTier(encounter.tier), m_isBossBattle(encounter.bossBattle),
+      m_isCampaignFinal(encounter.campaignFinal), m_questId(std::move(encounter.questId)),
+      m_worldObjectId(std::move(encounter.worldObjectId)) {
     initTexts();
     
     // 1. 무작위 몬스터 무리 스폰 (1~3마리)
-    if (m_isBossBattle) {
-        m_foes.push_back(MonsterFactory::createMonster("mon_dragon_whelp"));
+    if (!encounter.fixedMonsterId.empty()) {
+        m_foes.push_back(MonsterFactory::createMonster(encounter.fixedMonsterId));
     } else {
         spawnMonsters();
     }
@@ -306,7 +312,8 @@ void CombatState::rollInitiatives() {
     for (size_t i = 0; i < members.size(); ++i) {
         if (members[i] && !members[i]->isDead()) {
             int dexMod = members[i]->getAbilities().getModifier(members[i]->getAbilities().dexterity);
-            int roll = SessionRng::global().rollDie(20) + dexMod;
+            int roll = SessionRng::global().rollDie(20) + dexMod +
+                       CombatRules::initiativeBonus(*members[i]);
             m_turnOrder.push_back({false, static_cast<int>(i), roll});
         }
     }
@@ -342,13 +349,8 @@ void CombatState::nextTurn() {
     // 1. 전투 승리 여부 검사
     if (checkVictory()) {
         if (!distributeRewards()) return;
-        // [v0.8.0] 아군의 임시 버프 해제
-        for (int i = 0; i < m_game.getParty().getMemberCount(); ++i) {
-            if (auto member = m_game.getParty().getMember(i)) {
-                member->clearCombatBuffs();
-            }
-        }
-        if (m_isBossBattle) {
+        clearPartyCombatBuffs();
+        if (m_isCampaignFinal) {
             m_game.getStates().replaceAll(
                 std::make_unique<VictoryState>(m_game, m_victoryDurabilityUnknown));
         } else {
@@ -362,6 +364,7 @@ void CombatState::nextTurn() {
         addLog(LocalizationManager::getInstance().get("COMBAT_DEFEAT"));
         addLog(LocalizationManager::getInstance().get("COMBAT_LOG_TPK_CHECKPOINT"));
         const auto restoreResult = m_game.getParty().loadFromFile();
+        if (!restoreResult.succeeded()) m_game.getParty().markRecoveryPending();
         m_game.getStates().replaceAll(std::make_unique<GameOverState>(m_game, restoreResult.succeeded()));
         return;
     }
@@ -386,7 +389,7 @@ void CombatState::nextTurn() {
             addLog(log);
         }
 
-        if (checkVictory()) {
+        if (monster->isDead()) {
             nextTurn();
             return;
         }
@@ -417,7 +420,7 @@ void CombatState::nextTurn() {
             addLog(log);
         }
 
-        if (checkDefeat()) {
+        if (member->isDead()) {
             nextTurn();
             return;
         }
@@ -538,6 +541,7 @@ void CombatState::performEscapeAttempt() {
     if (roll >= 12) {
         addLog(LocalizationManager::getInstance().get("COMBAT_ESCAPE_SUCCESS"));
         std::cout << "[FSM] CombatState에서 탈출 성공하여 DungeonState로 복귀합니다." << std::endl;
+        clearPartyCombatBuffs();
         
         // [v0.5.0] changeState 호출 시 기존 DungeonState의 맵과 플레이어 위치가 날아가는 버그 수정.
         // 스택에 보존되어 있던 기존 DungeonState로 복귀하기 위해 popState 호출.
@@ -545,6 +549,12 @@ void CombatState::performEscapeAttempt() {
     } else {
         addLog(LocalizationManager::getInstance().get("COMBAT_ESCAPE_FAIL"));
         nextTurn();
+    }
+}
+
+void CombatState::clearPartyCombatBuffs() {
+    for (int index = 0; index < m_game.getParty().getMemberCount(); ++index) {
+        if (auto member = m_game.getParty().getMember(index)) member->clearCombatBuffs();
     }
 }
 
@@ -696,6 +706,7 @@ bool CombatState::checkDefeat() {
 
 bool CombatState::distributeRewards() {
     Party& party = m_game.getParty();
+    const PartyCheckpoint checkpoint = party.captureCheckpoint();
     
     // 1. 총 보상 산정
     int totalXp = 0;
@@ -736,7 +747,7 @@ bool CombatState::distributeRewards() {
             party.updateQuestKillProgress(monster->getId(), 1);
             const auto dropIds = MonsterFactory::getDropItemIds(monster->getId());
             if (!dropIds.empty()) {
-                if (m_isBossBattle) {
+                if (m_isCampaignFinal) {
                     for (const auto& dropId : dropIds) {
                         if (auto item = ItemFactory::createItem(dropId)) {
                             party.addItem(item);
@@ -754,19 +765,25 @@ bool CombatState::distributeRewards() {
         }
     }
 
-    if (m_isBossBattle) {
+    if (!m_questId.empty()) {
+        party.markQuestObjectiveComplete(m_questId);
+        if (auto* object = party.getWorld().findObject(m_worldObjectId)) {
+            object->state = WorldObjectState::RESOLVED;
+        }
+    }
+    if (m_isCampaignFinal) {
         party.setCampaignCompleted(true);
-        const auto saveResult = party.saveToFile();
-        if (!saveResult.durabilityConfirmed()) {
-            m_victoryDurabilityUnknown = true;
-            addLog(LocalizationManager::getInstance().get("VICTORY_DURABILITY_UNKNOWN"));
-            return true;
-        }
-        if (!saveResult) {
-            static_cast<void>(party.loadFromFile());
-            addLog(LocalizationManager::getInstance().get("COMBAT_LOG_REWARD_ROLLBACK"));
-            return false;
-        }
+    }
+    const auto saveResult = party.saveToFile();
+    if (!saveResult.durabilityConfirmed()) {
+        m_victoryDurabilityUnknown = true;
+        addLog(LocalizationManager::getInstance().get("VICTORY_DURABILITY_UNKNOWN"));
+        return true;
+    }
+    if (!saveResult) {
+        party.restoreCheckpoint(checkpoint);
+        addLog(LocalizationManager::getInstance().get("COMBAT_LOG_REWARD_ROLLBACK"));
+        return false;
     }
     return true;
 }

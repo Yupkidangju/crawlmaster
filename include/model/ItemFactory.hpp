@@ -16,7 +16,7 @@ public:
     // 고유 ID에 따른 새 아이템 객체 생성 (std::shared_ptr 반환)
     static std::shared_ptr<Item> createItem(const std::string& id);
 
-    // 상점에서 판매 가능한 모든 아이템 리스트 획득
+    // Town에서 직접 구매 가능한 기본 8종 카탈로그
     static std::vector<std::shared_ptr<Item>> getShopCatalog();
     static std::vector<std::string> getRegisteredIds();
 };

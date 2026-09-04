@@ -223,7 +223,7 @@ bool MagicMissileSpell::execute(Character& caster,
 
     // 100% 필중: 1d4 + INT + 1 마법 대미지
     int intMod = caster.getAbilities().getModifier(caster.getAbilities().intelligence);
-    int damage = rollDice(1, 4) + intMod + 1;
+    int damage = rollDice(1, 4) + intMod + 1 + CombatRules::spellDamageBonus(caster);
     damage = std::max(1, damage);
 
     target->takeDamage(damage);
@@ -285,7 +285,7 @@ bool FireballSpell::execute(Character& caster,
         if (target && !target->isDead()) {
             std::string targetName = target->getName();
             // 각 적에게 2d6 + 지능 대미지
-            int damage = rollDice(2, 6) + intMod;
+            int damage = rollDice(2, 6) + intMod + CombatRules::spellDamageBonus(caster);
             damage = std::max(1, damage);
             target->takeDamage(damage);
             addLocalizedLog(logOutput, "COMBAT_LOG_DAMAGE", {{"target", targetName}, {"damage", std::to_string(damage)}});
@@ -455,7 +455,7 @@ bool CureWoundsSpell::execute(Character& caster,
     std::string targetName = healTarget->getName();
 
     int wisMod = caster.getAbilities().getModifier(caster.getAbilities().wisdom);
-    int healAmount = rollDice(1, 8) + std::max(0, wisMod);
+    int healAmount = rollDice(1, 8) + std::max(0, wisMod) + CombatRules::healingBonus(caster);
 
     healTarget->heal(healAmount);
     addLocalizedLog(logOutput, "SKILL_LOG_CAST", {{"actor", casterName}, {"skill", getName()}});
@@ -515,7 +515,7 @@ bool PrayerOfHealingSpell::execute(Character& caster,
 
     for (auto& member : allies) {
         if (member && !member->isDead() && member->getHp() < member->getMaxHp()) {
-            int healAmount = rollDice(2, 6) + std::max(0, wisMod);
+            int healAmount = rollDice(2, 6) + std::max(0, wisMod) + CombatRules::healingBonus(caster);
             member->heal(healAmount);
             addLocalizedLog(logOutput, "COMBAT_LOG_HEALED", {{"target", member->getName()}, {"amount", std::to_string(healAmount)}});
         }

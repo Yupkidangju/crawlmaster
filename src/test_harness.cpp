@@ -92,7 +92,7 @@ void testDungeonMazeGeneration() {
     std::cout << "[Test] DFS 던전 미로 생성 및 연결성을 검증합니다." << std::endl;
 
     crawl::DungeonMap map;
-    map.generate();
+    map.generate(0x1001U);
 
     // 1. 플레이어 스폰 위치가 UPSTAIRS 계단 타일인지 체크
     CHECK(map.getTile(1, 1) == crawl::TileType::UPSTAIRS);
@@ -153,9 +153,9 @@ void testDndRulesAndLevelup() {
     // 1. 캐릭터 생성 (전사)
     auto hero = std::make_unique<crawl::Character>("TestWarrior", crawl::CharacterClass::WARRIOR);
     
-    // Warrior의 1레벨 기본 AC 검증 (10 + DEX보정치 + Scale Mail AC 4 + DEX제한적용)
+    // Warrior의 1레벨 기본 AC 검증 (Scale Mail + 제한 DEX + 방어 전투술)
     int dexMod = hero->getAbilities().getModifier(hero->getAbilities().dexterity);
-    int expectedAc = 14 + std::min(2, dexMod);
+    int expectedAc = 14 + std::min(2, dexMod) + 1;
     CHECK(hero->getAc() == expectedAc);
     
     // 2. 경험치 획득에 의한 2레벨 레벨업 유도
@@ -303,7 +303,8 @@ void testResetToDefaultDoesNotWrite() {
 }
 
 bool hasCanonicalCharacterSchema(const nlohmann::json& character) {
-    return character.contains("maxHp") && character.contains("spellSlots") &&
+    return character.contains("age") && character.contains("gender") &&
+           character.contains("maxHp") && character.contains("spellSlots") &&
            character.contains("maxSpellSlots") && character.contains("poisonTurns") &&
            character.contains("paralysisTurns") && character.contains("equipment") &&
            character.at("equipment").is_object() &&
@@ -394,22 +395,20 @@ void testReplaceAllClearsStateStack() {
     CHECK(manager.getCurrentState() == replacementAddress);
 }
 
-void testSaveV2CanonicalSchema() {
-    const std::filesystem::path fixtureDirectory = g_testDirectory / "save-v2-schema";
+void testSaveV3CanonicalSchema() {
+    const std::filesystem::path fixtureDirectory = g_testDirectory / "save-v3-schema";
     const std::filesystem::path savePath = fixtureDirectory / "save.json";
     std::filesystem::create_directories(fixtureDirectory);
 
     crawl::Party party;
-    party.addMember(std::make_shared<crawl::Character>("SchemaHero", crawl::CharacterClass::WARRIOR));
-    auto activeQuest = std::make_shared<crawl::Quest>(
-        "qst_clear_kobolds", "코볼트 소탕", "코볼트 5마리 처치", crawl::QuestType::KILL,
-        "mon_kobold", 5, 50, 100, std::vector<std::string>{"pot_strength"});
+    const crawl::CharacterIdentity identity{
+        "SchemaHero", 31, crawl::Gender::NON_BINARY, crawl::CharacterClass::WARRIOR};
+    const crawl::AbilityScore abilities{15, 12, 14, 10, 9, 11};
+    party.addMember(std::make_shared<crawl::Character>(identity, abilities));
+    auto activeQuest = crawl::Quest::createCanonical("qst_clear_kobolds");
     activeQuest->setCurrentCount(1);
     party.acceptQuest(activeQuest);
-    auto completedQuest = std::make_shared<crawl::Quest>(
-        "qst_hunt_spiders", "거미 사냥", "거대 거미 3마리 처치", crawl::QuestType::KILL,
-        "mon_giant_spider", 3, 100, 200,
-        std::vector<std::string>{"scr_cure", "pot_greater_heal"});
+    auto completedQuest = crawl::Quest::createCanonical("qst_hunt_spiders");
     completedQuest->setCurrentCount(3);
     party.acceptQuest(completedQuest);
     party.completeQuest("qst_hunt_spiders");
@@ -423,16 +422,18 @@ void testSaveV2CanonicalSchema() {
         file >> saved;
     }
 
-    CHECK(saved.at("schemaVersion") == 2 && saved.contains("activeQuests") &&
+    CHECK(saved.at("schemaVersion") == 4 && saved.contains("activeQuests") &&
           saved.contains("completedQuestIds") && saved.contains("campaignCompleted") &&
-          saved.contains("lastSessionSeed"));
+          saved.contains("lastSessionSeed") && saved.contains("world") && saved.contains("keyItems"));
+    CHECK(saved.at("members").at(0).at("age") == 31);
+    CHECK(saved.at("members").at(0).at("gender") == "non_binary");
     CHECK(hasCanonicalCharacterSchema(saved.at("members").at(0)));
     CHECK(hasCanonicalQuestSchema(saved.at("activeQuests").at(0)));
 
     std::filesystem::remove_all(fixtureDirectory);
 }
 
-void testV1SaveMigratesToCanonicalV2() {
+void testV1SaveMigratesToCanonicalV3() {
     const std::filesystem::path fixtureDirectory = g_testDirectory / "v1-migration";
     const std::filesystem::path savePath = fixtureDirectory / "save.json";
     std::filesystem::create_directories(fixtureDirectory);
@@ -490,12 +491,64 @@ void testV1SaveMigratesToCanonicalV2() {
         std::ifstream file(savePath);
         file >> migrated;
     }
-    CHECK(migrated.at("schemaVersion") == 2 && migrated.contains("activeQuests") &&
-          !migrated.contains("active_quests"));
+    CHECK(migrated.at("schemaVersion") == 4 && migrated.contains("activeQuests") &&
+          migrated.contains("world") && !migrated.contains("active_quests"));
+    CHECK(migrated.at("members").at(0).at("age") == 0);
+    CHECK(migrated.at("members").at(0).at("gender") == "unspecified");
     CHECK(hasCanonicalCharacterSchema(migrated.at("members").at(0)));
     CHECK(hasCanonicalQuestSchema(migrated.at("activeQuests").at(0)));
 
     std::filesystem::remove_all(fixtureDirectory);
+}
+
+void testV2SaveLoadsUnknownIdentityAndMigratesToV3() {
+    const std::filesystem::path fixtureDirectory = g_testDirectory / "v2-migration";
+    const std::filesystem::path savePath = fixtureDirectory / "save.json";
+    std::filesystem::create_directories(fixtureDirectory);
+    const auto character = makeInvalidV2CharacterFixture(1, 10, 10);
+    {
+        std::ofstream file(savePath);
+        file << makeV2Root(nlohmann::json::array({character})).dump(4);
+    }
+
+    crawl::Party party;
+    CHECK(party.loadFromFile(savePath.string()).status == crawl::PersistenceStatus::Loaded);
+    CHECK(party.getMember(0)->getAge() == 0);
+    CHECK(party.getMember(0)->getGender() == crawl::Gender::UNSPECIFIED);
+    CHECK(party.saveToFile(savePath.string()).status == crawl::PersistenceStatus::Saved);
+
+    nlohmann::json migrated;
+    {
+        std::ifstream file(savePath);
+        file >> migrated;
+    }
+    CHECK(migrated.at("schemaVersion") == 4);
+    CHECK(migrated.at("members").at(0).at("age") == 0);
+    CHECK(migrated.at("members").at(0).at("gender") == "unspecified");
+    std::filesystem::remove_all(fixtureDirectory);
+}
+
+void testInvalidV3IdentityIsRejected() {
+    auto character = makeInvalidV2CharacterFixture(1, 10, 10);
+    character["age"] = 20;
+    character["gender"] = "invalid";
+    bool rejectedGender = false;
+    try {
+        static_cast<void>(crawl::Character::fromJson(character, 3));
+    } catch (const std::exception&) {
+        rejectedGender = true;
+    }
+    CHECK(rejectedGender);
+
+    character["gender"] = "female";
+    character["age"] = 81;
+    bool rejectedAge = false;
+    try {
+        static_cast<void>(crawl::Character::fromJson(character, 3));
+    } catch (const std::exception&) {
+        rejectedAge = true;
+    }
+    CHECK(rejectedAge);
 }
 
 void testBackupRecoveryQuarantinesPrimary() {
@@ -534,6 +587,87 @@ void testBackupRecoveryQuarantinesPrimary() {
     CHECK(secondProcess.getGold() == previousGold);
 
     std::filesystem::remove_all(fixtureDirectory);
+}
+
+void testCorruptBackupIsAlsoQuarantined() {
+    const auto directory = g_testDirectory / "corrupt-primary-and-backup";
+    const auto savePath = directory / "save.json";
+    std::filesystem::create_directories(directory);
+    crawl::Party party;
+    CHECK(party.saveToFile(savePath.string()));
+    party.addGold(1);
+    CHECK(party.saveToFile(savePath.string()));
+    const std::string primaryBytes = "{ corrupt-primary";
+    const std::string backupBytes = "{ corrupt-backup";
+    std::ofstream(savePath, std::ios::trunc) << primaryBytes;
+    std::ofstream(savePath.string() + ".bak", std::ios::trunc) << backupBytes;
+    crawl::Party target;
+    CHECK(target.loadFromFile(savePath.string()).status == crawl::PersistenceStatus::Corrupt);
+    bool primaryQuarantined = false;
+    bool backupQuarantined = false;
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        const std::string bytes = readFileBytes(entry.path());
+        primaryQuarantined = primaryQuarantined || bytes == primaryBytes;
+        backupQuarantined = backupQuarantined || bytes == backupBytes;
+    }
+    CHECK(primaryQuarantined);
+    CHECK(backupQuarantined);
+    CHECK(!std::filesystem::exists(savePath));
+    CHECK(!std::filesystem::exists(savePath.string() + ".bak"));
+    std::filesystem::remove_all(directory);
+}
+
+void testMissingPrimaryCorruptBackupIsQuarantined() {
+    const auto directory = g_testDirectory / "missing-primary-corrupt-backup";
+    const auto savePath = directory / "save.json";
+    const auto backupPath = std::filesystem::path(savePath.string() + ".bak");
+    std::filesystem::create_directories(directory);
+
+    const std::array<std::string, 2> cases = {{
+        "{ corrupt-backup-only",
+        std::string(1024U * 1024U + 1U, 'x'),
+    }};
+    for (const auto& bytes : cases) {
+        std::filesystem::remove(savePath);
+        std::filesystem::remove(backupPath);
+        std::ofstream(backupPath, std::ios::binary | std::ios::trunc) << bytes;
+
+        crawl::Party target;
+        const auto result = target.loadFromFile(savePath.string());
+        CHECK(result.status == crawl::PersistenceStatus::Corrupt);
+        CHECK(!std::filesystem::exists(savePath));
+        CHECK(!std::filesystem::exists(backupPath));
+        CHECK(std::filesystem::exists(result.path));
+        CHECK(readFileBytes(result.path) == bytes);
+
+        crawl::Party secondAttempt;
+        CHECK(secondAttempt.loadFromFile(savePath.string()).status ==
+              crawl::PersistenceStatus::NotFound);
+        std::filesystem::remove(result.path);
+    }
+    std::filesystem::remove_all(directory);
+}
+
+void testSaveLoadRejectsLeafSymlinks() {
+#ifndef _WIN32
+    const auto directory = g_testDirectory / "save-symlink";
+    const auto realPath = directory / "real.json";
+    const auto linkPath = directory / "link.json";
+    std::filesystem::create_directories(directory);
+    crawl::Party source;
+    CHECK(source.saveToFile(realPath.string()));
+    const std::string realBytes = readFileBytes(realPath);
+    std::error_code error;
+    std::filesystem::create_symlink(realPath, linkPath, error);
+    CHECK(!error);
+    if (!error) {
+        crawl::Party target;
+        CHECK(target.loadFromFile(linkPath.string()).status == crawl::PersistenceStatus::IoError);
+        CHECK(!target.saveToFile(linkPath.string()));
+        CHECK(readFileBytes(realPath) == realBytes);
+    }
+    std::filesystem::remove_all(directory);
+#endif
 }
 
 void testAtomicSaveFailurePreservesTarget() {
@@ -620,12 +754,12 @@ void testMonsterAndQuestSystem() {
     party.addMember(hero);
 
     // 1. 코볼트 사냥 퀘스트 수락
-    auto killQuest = std::make_shared<crawl::Quest>("qst_clear_kobolds", "코볼트 소탕", "mon_kobold 5마리", crawl::QuestType::KILL, "mon_kobold", 5, 50, 100);
+    auto killQuest = crawl::Quest::createCanonical("qst_clear_kobolds");
     party.acceptQuest(killQuest);
     CHECK(party.hasQuest("qst_clear_kobolds") == true);
 
     // 2. 메이스 수집 퀘스트 수락
-    auto collectQuest = std::make_shared<crawl::Quest>("qst_collect_maces", "메이스 회수", "wpn_mace 2개", crawl::QuestType::COLLECT, "wpn_mace", 2, 80, 150);
+    auto collectQuest = crawl::Quest::createCanonical("qst_collect_maces");
     party.acceptQuest(collectQuest);
     CHECK(party.hasQuest("qst_collect_maces") == true);
 
@@ -634,6 +768,7 @@ void testMonsterAndQuestSystem() {
     auto activeQ = party.getActiveQuests();
     auto it = std::find_if(activeQ.begin(), activeQ.end(), [&](const auto& q){ return q->getId() == "qst_clear_kobolds"; });
     CHECK(it != activeQ.end());
+    if (it == activeQ.end()) return;
     CHECK((*it)->getCurrentCount() == 2);
     CHECK((*it)->checkCompletion() == false);
 
@@ -670,7 +805,7 @@ void testMonsterAndQuestSystem() {
     
     CHECK(party.hasQuest("qst_collect_maces") == false);
     // 가방 크기가 (이전 크기 - 2) 가 되었는지 검사
-    CHECK(party.getInventory().size() == bagSizeBefore - 2);
+    CHECK(party.getInventory().size() == bagSizeBefore - 1);
 
     std::cout << "-> [Success] 퀘스트 진척도 갱신, 수집 아이템 자동 차감 및 보상 분배 검증 완료." << std::endl;
 }
@@ -680,7 +815,7 @@ void testDungeonAutoMoveBFS() {
     std::cout << "[Test] BFS 기반 최단 경로 및 자동 이동 유효성을 검증합니다." << std::endl;
 
     crawl::DungeonMap map;
-    map.generate();
+    map.generate(0x1002U);
 
     // 시작 지점 (1, 1)은 visited로 설정되어 있음
     int tx = -1;
@@ -1363,9 +1498,14 @@ int main(int argc, char* argv[]) {
     testDefaultInventoryContract();
     testCorruptCustomSaveIsNonDestructive();
     testResetToDefaultDoesNotWrite();
-    testSaveV2CanonicalSchema();
-    testV1SaveMigratesToCanonicalV2();
+    testSaveV3CanonicalSchema();
+    testV1SaveMigratesToCanonicalV3();
+    testV2SaveLoadsUnknownIdentityAndMigratesToV3();
+    testInvalidV3IdentityIsRejected();
     testBackupRecoveryQuarantinesPrimary();
+    testCorruptBackupIsAlsoQuarantined();
+    testMissingPrimaryCorruptBackupIsQuarantined();
+    testSaveLoadRejectsLeafSymlinks();
     testAtomicSaveFailurePreservesTarget();
     testInvalidV2MembersAreRejectedWithoutMutation();
     testReplaceAllClearsStateStack();

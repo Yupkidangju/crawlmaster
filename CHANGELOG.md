@@ -4,7 +4,23 @@
 
 ---
 
-## [Unreleased] - Turn 1 audit remediation
+## [Unreleased] - Turn 3 audit remediation
+
+### 0.10.0 persistent world and objective quests
+* 새 게임에 귀속되는 3층 20x20 던전과 save schema v4 전체 월드 snapshot을 추가했다.
+* 수량형 신규 수주를 회수·2층 고정 보스·3층 NPC 탐색 퀘스트로 교체하고 중요품, 현장 달성, 성 보고 보상을 분리했다.
+* 1~3층 계단 이동, 발견 후 목표 미니맵 표식과 퀘스트 일지를 추가하고 기존 v1~v3 파티 진행과 활성 legacy 퀘스트를 이관했다.
+
+### Turn 3 audit remediation
+* seedless legacy 이관, strict v4, world/quest/key 교차 검증과 exact-byte canonical save를 추가했다.
+* Party·World·Quest·RNG in-memory rollback, latest full-session TPK 복원, corrupt backup quarantine과 read/write symlink 대칭 정책을 추가했다.
+* persisted identity·class spell-slot 검증, poison 사망 turn skip, escape buff cleanup과 no-op 소모품 비소비를 수정했다.
+* CharacterInfo 상태 표시, 항상 확인하는 New Game, 저장 재시도/명시 종료 화면과 production-linked lifecycle E2E를 추가했다.
+* TPK/Continue 복구 실패 뒤 `recoveryPending` write fence를 세워 죽거나 검증되지 않은 메모리 Party가 정상 save를 덮어쓰지 못하게 하고, 종료 화면에서 load 재시도 또는 무저장 종료를 선택하게 했다.
+* primary가 없고 backup만 손상된 경우에도 backup candidate를 격리하도록 수정하고 RA15 report 15/plan 16 계보와 `ShutdownState` 책임 문서를 동기화했다.
+* current v0.10 hosted Windows/SLSA 증거는 새 immutable commit 검증 전까지 `UNVERIFIED`로 정정했다.
+
+## Historical pre-0.10 audit remediation (superseded evidence)
 
 ### Hosted gate fixes
 * Linux hosted runner에서 production-linked RNG Continue test가 DISPLAY 부재로 중단되지 않도록 해당 CTest를 Xvfb 경로에 연결했다. Windows는 기존 직접 실행 경로를 유지한다.
@@ -24,12 +40,16 @@
 * Linux 전체 CTest 13개와 MinGW Windows 전체 target compile/ZIP 정적 검증을 추가했다. 이후 hosted MSVC gate와 native SLSA/SPDX attestation은 run `33786241695` attempt 2에서 통과했다.
 
 ### Added (추가됨)
+* 이름·나이·성별·직업 선택, 무제한 4d6 리롤, 가중 10포인트 배분을 갖춘 확정형 캐릭터 생성을 추가했다.
+* 전사 방어 전투술, 도적 빠른 반사신경, 마법사 비전 강화, 성직자 신성한 은총의 레벨 1 직업 특성을 추가했다.
 * 한 층 수직 슬라이스에 Door 랜드마크, 최종 BossGate, Dragon Whelp 보스, Victory/Game Over 상태를 연결했다.
 * 3개 canonical quest, 19개 item 획득원 registry, monster drop/quest item reward와 완료 이력을 추가했다.
 * HUD/Combat/Content/Agency 계약 테스트와 CTest 등록, Linux/Windows CI, CMake install/CPack, SPDX 직접 의존성 manifest 및 third-party license bundle을 추가했다.
 * Text Scale과 High Contrast 설정, 모집 preview/reroll/confirm, New/Continue 분리, 판매/해고/전투 아이템 확인 흐름을 추가했다.
 
 ### Changed (변경됨)
+* 현재 파티 위치를 지나간 녹색 바닥과 구분되는 청록색 방향 삼각형으로 표시한다.
+* save schema를 v3으로 확장하고 기존 v1/v2 캐릭터의 나이·성별을 미상으로 호환 이관한다.
 * 모든 게임 난수를 한 session seed의 `std::mt19937` stream으로 통합했다.
 * 전투는 weapon dice count/type, Bless, natural 1/20, Skeleton resistance, 장비 class/STR 제한, tier gold 공식을 domain 규칙으로 사용한다.
 * save/config를 OS별 per-user path와 schema v2로 이동하고 v1 migration을 지원한다. 활성 dungeon 좌표는 저장하지 않는 town-checkpoint 정책으로 확정했다.

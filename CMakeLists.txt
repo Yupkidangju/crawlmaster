@@ -1,7 +1,7 @@
 # CMakeLists.txt
-# [v0.9.4] TestHarness 저장소 격리 및 Town 허브 번역 키 회귀 검증을 반영한 패치 버전 갱신
+# [v0.10.0] 3층 영속 월드, 목적형 퀘스트와 save schema v4 반영
 cmake_minimum_required(VERSION 3.28)
-project(Crawlmaster VERSION 0.9.4 LANGUAGES CXX)
+project(Crawlmaster VERSION 0.10.0 LANGUAGES CXX)
 
 enable_testing()
 include(GNUInstallDirs)
@@ -59,10 +59,14 @@ set(RUNTIME_SOURCES
     src/controller/GameOverState.cpp
     src/controller/VictoryState.cpp
     src/controller/TownState.cpp
+    src/controller/CharacterCreationState.cpp
     src/controller/DungeonState.cpp
+    src/controller/QuestJournalState.cpp
+    src/controller/ShutdownState.cpp
     src/controller/SettingsState.cpp
     src/controller/CharacterInfoState.cpp
     src/model/DungeonMap.cpp
+    src/model/DungeonWorld.cpp
     src/view/DungeonRenderer.cpp
     src/view/PartyHudSnapshot.cpp
     src/model/Character.cpp
@@ -106,6 +110,7 @@ set(TEST_SOURCES
     src/core/SessionRng.cpp
     src/core/LocalizationManager.cpp
     src/model/DungeonMap.cpp
+    src/model/DungeonWorld.cpp
     src/model/Character.cpp
     src/model/CombatActionRules.cpp
     src/model/CombatRules.cpp
@@ -132,6 +137,8 @@ add_executable(HudContractTests
     src/model/Character.cpp
     src/model/CombatRules.cpp
     src/model/Party.cpp
+    src/model/DungeonMap.cpp
+    src/model/DungeonWorld.cpp
     src/model/ItemFactory.cpp
     src/model/Quest.cpp
     src/model/Skill.cpp
@@ -165,6 +172,7 @@ add_executable(ContentContractTests
     src/model/Character.cpp
     src/model/CombatRules.cpp
     src/model/DungeonMap.cpp
+    src/model/DungeonWorld.cpp
     src/model/ItemFactory.cpp
     src/model/MonsterFactory.cpp
     src/model/Party.cpp
@@ -186,6 +194,8 @@ add_executable(AgencyContractTests
     src/model/CombatRules.cpp
     src/model/ItemFactory.cpp
     src/model/Party.cpp
+    src/model/DungeonMap.cpp
+    src/model/DungeonWorld.cpp
     src/model/Quest.cpp
     src/model/RecruitmentDraft.cpp
     src/model/Skill.cpp
@@ -271,6 +281,20 @@ else()
         "${RNG_REPLAY_DIR}/save.json" "${RNG_REPLAY_DIR}/expected.txt" "${RNG_REPLAY_DIR}/config.json")
 endif()
 set_tests_properties(RngReplayCheckpointContinue PROPERTIES FIXTURES_REQUIRED RngReplayCheckpoint)
+add_test(NAME LegacySeedlessMigrationProcessA COMMAND RngProcessReplayTests migrate-a
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/save_v1.json"
+    "${RNG_REPLAY_DIR}/legacy-a.json" "${RNG_REPLAY_DIR}/unused.json")
+set_tests_properties(LegacySeedlessMigrationProcessA PROPERTIES
+    FIXTURES_REQUIRED RngReplayFixture FIXTURES_SETUP LegacyMigrationA)
+add_test(NAME LegacySeedlessMigrationProcessB COMMAND RngProcessReplayTests migrate-b
+    "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/save_v1.json"
+    "${RNG_REPLAY_DIR}/legacy-b.json" "${RNG_REPLAY_DIR}/unused.json")
+set_tests_properties(LegacySeedlessMigrationProcessB PROPERTIES
+    FIXTURES_REQUIRED RngReplayFixture FIXTURES_SETUP LegacyMigrationB)
+add_test(NAME LegacySeedlessMigrationCompare COMMAND ${CMAKE_COMMAND} -E compare_files
+    "${RNG_REPLAY_DIR}/legacy-a.json" "${RNG_REPLAY_DIR}/legacy-b.json")
+set_tests_properties(LegacySeedlessMigrationCompare PROPERTIES
+    FIXTURES_REQUIRED "LegacyMigrationA;LegacyMigrationB")
 
 add_executable(UiStateRasterTests tests/test_ui_state_raster.cpp)
 target_link_libraries(UiStateRasterTests PRIVATE CrawlmasterRuntime)

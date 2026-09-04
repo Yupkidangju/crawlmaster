@@ -28,6 +28,9 @@ public:
 
     // 전역 파티 매니저 인스턴스 반환 함수
     Party& getParty();
+    void requestShutdown();
+    void completeShutdown();
+    bool isShutdownApproved() const;
 
 private:
     // SFML 윈도우 및 이벤트 처리
@@ -45,6 +48,7 @@ private:
     sf::Font m_cjkFont;                 // [v0.9.2] 일어/중국어 등 다국어 렌더링용 CJK 폰트 자산 추가
     GameStateManager m_stateManager;    // 전역 게임 상태 매니저
     Party m_party;                      // 전역 공용 파티 데이터 매니저
+    bool m_shutdownApproved = false;
 };
 
 } // namespace crawl

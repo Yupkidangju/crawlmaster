@@ -6,6 +6,7 @@
 #include "core/ResourceLocator.hpp"
 #include "core/SessionRng.hpp"
 #include "controller/TitleState.hpp"
+#include "controller/ShutdownState.hpp"
 #include <iostream>
 
 namespace crawl {
@@ -57,13 +58,39 @@ Party& Game::getParty() {
     return m_party;
 }
 
+void Game::requestShutdown() {
+    if (dynamic_cast<ShutdownState*>(m_stateManager.getCurrentState()) != nullptr) return;
+    if (m_party.isRecoveryPending()) {
+        m_stateManager.pushState(
+            std::make_unique<ShutdownState>(*this, PersistenceStatus::RecoveryPending));
+        return;
+    }
+    if (!m_party.hasActiveSaveSession()) {
+        completeShutdown();
+        return;
+    }
+    const auto result = m_party.saveToFile();
+    if (result.status == PersistenceStatus::Saved) {
+        completeShutdown();
+        return;
+    }
+    m_stateManager.pushState(std::make_unique<ShutdownState>(*this, result.status));
+}
+
+void Game::completeShutdown() {
+    m_shutdownApproved = true;
+    m_window.close();
+}
+
+bool Game::isShutdownApproved() const { return m_shutdownApproved; }
+
 void Game::processEvents() {
     sf::Event event;
     // SFML 이벤트 큐에 쌓인 메시지 순차 수집
     while (m_window.pollEvent(event)) {
         // 윈도우 닫기 버튼 클릭 시 창 종료
         if (event.type == sf::Event::Closed) {
-            m_window.close();
+            requestShutdown();
             return;
         }
 

@@ -11,6 +11,7 @@
 namespace crawl {
 
 class Game; // 전방 선언
+class Character;
 
 // CharacterInfoState 클래스: 캐릭터 상세 조회, 장비 장착/해제, 인벤토리 아이템 소모를 제어하는 상태 클래스
 class CharacterInfoState : public GameState {
@@ -26,6 +27,7 @@ public:
     void draw(sf::RenderWindow& window) override;
 
 private:
+    friend class ControllerTestAccess;
     Game& m_game;
     bool m_persistChanges;
 
@@ -51,6 +53,7 @@ private:
     // 캐릭터가 착용 중인 장비를 해제하여 공용 인벤토리 가방으로 복귀
     void unequipSelectedSlot();
     void drawLargeTextLayout(sf::RenderWindow& window);
+    std::string statusSummary(const Character& character) const;
     
     // 단순 선/사각형 상자 그리기 유틸리티
     void drawBox(sf::RenderWindow& window, float x, float y, float w, float h, sf::Color color, float thickness = 1.0f);

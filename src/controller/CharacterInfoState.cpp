@@ -6,12 +6,41 @@
 #include "model/Party.hpp"
 #include "model/Character.hpp"
 #include "model/ConcreteItems.hpp"
+#include "model/CombatActionRules.hpp"
 #include "core/LocalizationManager.hpp"
 #include <random>
 #include <algorithm>
 #include <iostream>
 
 namespace crawl {
+namespace {
+
+std::string genderLabel(Gender gender, const LocalizationManager& localization) {
+    switch (gender) {
+        case Gender::MALE: return localization.get("GENDER_MALE");
+        case Gender::FEMALE: return localization.get("GENDER_FEMALE");
+        case Gender::NON_BINARY: return localization.get("GENDER_NON_BINARY");
+        case Gender::UNSPECIFIED: return localization.get("GENDER_UNSPECIFIED");
+    }
+    return localization.get("GENDER_UNSPECIFIED");
+}
+
+const char* traitKey(CharacterClass characterClass) {
+    switch (characterClass) {
+        case CharacterClass::WARRIOR: return "TRAIT_WARRIOR";
+        case CharacterClass::MAGE: return "TRAIT_MAGE";
+        case CharacterClass::ROGUE: return "TRAIT_ROGUE";
+        case CharacterClass::CLERIC: return "TRAIT_CLERIC";
+    }
+    return "";
+}
+
+std::string ageLabel(const Character& character, const LocalizationManager& localization) {
+    return character.getAge() == 0 ? localization.get("GENDER_UNSPECIFIED")
+                                   : std::to_string(character.getAge());
+}
+
+} // namespace
 
 CharacterInfoState::CharacterInfoState(Game& game, bool persistChanges)
     : m_game(game), m_persistChanges(persistChanges), m_focusArea(1), m_selectedCharIndex(0),
@@ -136,6 +165,11 @@ void CharacterInfoState::draw(sf::RenderWindow& window) {
         // 기본 인적 정보
         drawText(window, LocalizationManager::getInstance().format("CHAR_INFO_NAME_LINE", {
             {"name", caster->getName()}}), 60.0f, 150.0f, 12, brightGreen);
+
+        drawText(window, LocalizationManager::getInstance().format("CHAR_INFO_IDENTITY_LINE", {
+            {"age", ageLabel(*caster, LocalizationManager::getInstance())},
+            {"gender", genderLabel(caster->getGender(), LocalizationManager::getInstance())}}),
+            60.0f, 175.0f, 12, brightGreen);
         
         // 클래스 정보 다국어 치환
         std::string classStr = "";
@@ -147,34 +181,39 @@ void CharacterInfoState::draw(sf::RenderWindow& window) {
         }
         drawText(window, LocalizationManager::getInstance().format("CHAR_INFO_CLASS_LINE", {
             {"class", classStr}, {"level", std::to_string(caster->getLevel())}}),
-            60.0f, 175.0f, 12, brightGreen);
+            60.0f, 200.0f, 12, brightGreen);
+        drawText(window, LocalizationManager::getInstance().get("CREATE_TRAIT") + ": " +
+                 LocalizationManager::getInstance().get(traitKey(caster->getClass())),
+                 60.0f, 225.0f, 11, amber);
         
         std::string hpStr = LocalizationManager::getInstance().get("CHAR_INFO_HP") + ": " + std::to_string(caster->getHp()) + " / " + std::to_string(caster->getMaxHp());
         sf::Color hpColor = caster->isDead() ? red : (caster->getHp() < caster->getMaxHp() / 3 ? amber : brightGreen);
-        drawText(window, hpStr, 60.0f, 200.0f, 12, hpColor);
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_XP") + ": " + std::to_string(caster->getXp()) + " / " + ((caster->getLevel() == 1) ? "300" : "900"), 60.0f, 225.0f, 12, brightGreen);
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_AC") + ": " + std::to_string(caster->getAc()), 60.0f, 250.0f, 12, brightGreen);
+        drawText(window, hpStr, 60.0f, 250.0f, 12, hpColor);
+        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_XP") + ": " + std::to_string(caster->getXp()) + " / " + ((caster->getLevel() == 1) ? "300" : "900"), 60.0f, 275.0f, 12, brightGreen);
+        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_AC") + ": " + std::to_string(caster->getAc()), 60.0f, 300.0f, 12, brightGreen);
+        drawText(window, statusSummary(*caster), 60.0f, 320.0f, 12,
+                 caster->isDead() ? red : amber);
 
         if (caster->getClass() == CharacterClass::MAGE || caster->getClass() == CharacterClass::CLERIC) {
-            drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_SPELLS") + ": " + std::to_string(caster->getSpellSlots()) + " / " + std::to_string(caster->getMaxSpellSlots()), 60.0f, 275.0f, 12, brightGreen);
+            drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_SPELLS") + ": " + std::to_string(caster->getSpellSlots()) + " / " + std::to_string(caster->getMaxSpellSlots()), 250.0f, 300.0f, 12, brightGreen);
         }
 
         // D&D 6대 능력치 및 보정치 출력
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_ABILITIES"), 60.0f, 310.0f, 12, leftFrameColor);
+        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_ABILITIES"), 60.0f, 340.0f, 12, leftFrameColor);
         const auto& ab = caster->getAbilities();
         auto getModStr = [&](int score) {
             int mod = ab.getModifier(score);
             return (mod >= 0 ? "+" : "") + std::to_string(mod);
         };
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_STR") + ": " + std::to_string(ab.strength) + " (" + getModStr(ab.strength) + ")", 60.0f, 335.0f, 12, brightGreen);
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_DEX") + ": " + std::to_string(ab.dexterity) + " (" + getModStr(ab.dexterity) + ")", 60.0f, 360.0f, 12, brightGreen);
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_CON") + ": " + std::to_string(ab.constitution) + " (" + getModStr(ab.constitution) + ")", 60.0f, 385.0f, 12, brightGreen);
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_INT") + ": " + std::to_string(ab.intelligence) + " (" + getModStr(ab.intelligence) + ")", 250.0f, 335.0f, 12, brightGreen);
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_WIS") + ": " + std::to_string(ab.wisdom) + " (" + getModStr(ab.wisdom) + ")", 250.0f, 360.0f, 12, brightGreen);
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_CHA") + ": " + std::to_string(ab.charisma) + " (" + getModStr(ab.charisma) + ")", 250.0f, 385.0f, 12, brightGreen);
+        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_STR") + ": " + std::to_string(ab.strength) + " (" + getModStr(ab.strength) + ")", 60.0f, 365.0f, 12, brightGreen);
+        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_DEX") + ": " + std::to_string(ab.dexterity) + " (" + getModStr(ab.dexterity) + ")", 60.0f, 390.0f, 12, brightGreen);
+        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_CON") + ": " + std::to_string(ab.constitution) + " (" + getModStr(ab.constitution) + ")", 60.0f, 415.0f, 12, brightGreen);
+        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_INT") + ": " + std::to_string(ab.intelligence) + " (" + getModStr(ab.intelligence) + ")", 250.0f, 365.0f, 12, brightGreen);
+        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_WIS") + ": " + std::to_string(ab.wisdom) + " (" + getModStr(ab.wisdom) + ")", 250.0f, 390.0f, 12, brightGreen);
+        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_CHA") + ": " + std::to_string(ab.charisma) + " (" + getModStr(ab.charisma) + ")", 250.0f, 415.0f, 12, brightGreen);
 
         // 장착 장비 슬롯 정보
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_EQUIP_SLOTS_GUIDE"), 60.0f, 430.0f, 12, leftFrameColor);
+        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_EQUIP_SLOTS_GUIDE"), 60.0f, 450.0f, 12, leftFrameColor);
 
         auto drawSlot = [&](const std::string& label, EquipSlot slot, float yPos, int idx) {
             auto item = caster->getEquippedItem(slot);
@@ -184,9 +223,9 @@ void CharacterInfoState::draw(sf::RenderWindow& window) {
             drawText(window, cursor + label + ": " + itemName, 60.0f, yPos, 12, slotColor);
         };
 
-        drawSlot(LocalizationManager::getInstance().get("SLOT_WEAPON"), EquipSlot::WEAPON, 455.0f, 0);
-        drawSlot(LocalizationManager::getInstance().get("SLOT_ARMOR"), EquipSlot::ARMOR, 480.0f, 1);
-        drawSlot(LocalizationManager::getInstance().get("SLOT_SHIELD"), EquipSlot::SHIELD, 505.0f, 2);
+        drawSlot(LocalizationManager::getInstance().get("SLOT_WEAPON"), EquipSlot::WEAPON, 475.0f, 0);
+        drawSlot(LocalizationManager::getInstance().get("SLOT_ARMOR"), EquipSlot::ARMOR, 500.0f, 1);
+        drawSlot(LocalizationManager::getInstance().get("SLOT_SHIELD"), EquipSlot::SHIELD, 525.0f, 2);
     } else {
         drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_NO_MEMBERS"), 265.0f, 300.0f, 12, brightGreen, true);
     }
@@ -277,19 +316,25 @@ void CharacterInfoState::drawLargeTextLayout(sf::RenderWindow& window) {
                 case CharacterClass::CLERIC: className = localization.get("CLASS_CLERIC"); break;
             }
             float y = 170.0f;
-            const float step = 39.0f;
+            const float step = 32.0f;
             auto line = [&](const std::string& text, sf::Color color) {
                 drawText(window, text, 70.0f, y, 14, color);
                 y += step;
             };
             line(localization.format("CHAR_INFO_NAME_LINE", {{"name", character->getName()}}), brightGreen);
+            line(localization.format("CHAR_INFO_IDENTITY_LINE", {
+                {"age", ageLabel(*character, localization)},
+                {"gender", genderLabel(character->getGender(), localization)}}), brightGreen);
             line(localization.format("CHAR_INFO_CLASS_LINE", {
                 {"class", className}, {"level", std::to_string(character->getLevel())}}), brightGreen);
+            line(localization.get("CREATE_TRAIT") + ": " +
+                 localization.get(traitKey(character->getClass())), amber);
             line(localization.get("CHAR_INFO_HP") + ": " + std::to_string(character->getHp()) +
                  "/" + std::to_string(character->getMaxHp()), brightGreen);
             line(localization.get("CHAR_INFO_XP") + ": " + std::to_string(character->getXp()) +
                  "/" + (character->getLevel() == 1 ? "300" : "900"), brightGreen);
             line(localization.get("CHAR_INFO_AC") + ": " + std::to_string(character->getAc()), brightGreen);
+            line(statusSummary(*character), character->isDead() ? sf::Color(255, 51, 51) : amber);
             const auto abilities = character->getAbilities();
             line("STR " + std::to_string(abilities.strength) + " | DEX " +
                  std::to_string(abilities.dexterity) + " | CON " + std::to_string(abilities.constitution), muted);
@@ -331,6 +376,34 @@ void CharacterInfoState::drawLargeTextLayout(sf::RenderWindow& window) {
     if (!m_statusMsg.empty()) drawText(window, m_statusMsg, 50.0f, 650.0f, 14, amber);
     drawBox(window, 40.0f, 690.0f, 944.0f, 55.0f, neonGreen, 1.5f);
     drawText(window, localization.get("CHAR_INFO_GUIDE_LARGE"), 512.0f, 710.0f, 14, brightGreen, true);
+}
+
+std::string CharacterInfoState::statusSummary(const Character& character) const {
+    auto& localization = LocalizationManager::getInstance();
+    std::vector<std::string> states;
+    if (character.isDead()) states.push_back(localization.get("STATUS_DEAD"));
+    if (character.getPoisonTurns() > 0) {
+        states.push_back(localization.get("STATUS_POISON") + ":" + std::to_string(character.getPoisonTurns()));
+    }
+    if (character.getParalysisTurns() > 0) {
+        states.push_back(localization.get("STATUS_PARALYSIS") + ":" + std::to_string(character.getParalysisTurns()));
+    }
+    if (character.getStrBuffTurns() > 0) {
+        states.push_back(localization.get("STATUS_STRENGTH") + ":+" +
+                         std::to_string(character.getStrBuffAmount()) + "/" +
+                         std::to_string(character.getStrBuffTurns()));
+    }
+    if (character.getDexBuffTurns() > 0) {
+        states.push_back(localization.get("STATUS_DEXTERITY") + ":+" +
+                         std::to_string(character.getDexBuffAmount()) + "/" +
+                         std::to_string(character.getDexBuffTurns()));
+    }
+    if (character.getBlessTurns() > 0) {
+        states.push_back(localization.get("STATUS_BLESS") + ":" + std::to_string(character.getBlessTurns()));
+    }
+    std::string summary = states.empty() ? localization.get("CHAR_INFO_HEALTHY") : states.front();
+    for (std::size_t index = 1; index < states.size(); ++index) summary += ", " + states[index];
+    return localization.get("CHAR_INFO_CONDITIONS") + ": " + summary;
 }
 
 void CharacterInfoState::useSelectedConsumable() {
@@ -381,6 +454,11 @@ void CharacterInfoState::useSelectedConsumable() {
     // 다형성 기반 효과 적용
     auto consumable = std::dynamic_pointer_cast<ConsumableItem>(item);
     if (!consumable) return;
+    if (!CombatActionRules::canUseConsumable(*consumable, *caster)) {
+        m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_ITEM_NO_EFFECT");
+        return;
+    }
+    const PartyCheckpoint checkpoint = party.captureCheckpoint();
 
     std::vector<std::string> useLogs;
     std::vector<std::shared_ptr<Character>> partyList;
@@ -400,7 +478,7 @@ void CharacterInfoState::useSelectedConsumable() {
             return;
         }
         if (!saveResult) {
-            static_cast<void>(party.loadFromFile());
+            party.restoreCheckpoint(checkpoint);
             m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_ITEM_ROLLBACK");
             return;
         }
@@ -420,6 +498,7 @@ void CharacterInfoState::useSelectedConsumable() {
 
 void CharacterInfoState::equipSelectedItem() {
     auto& party = m_game.getParty();
+    const PartyCheckpoint checkpoint = party.captureCheckpoint();
     const auto& inv = party.getInventory();
     if (m_inventoryIndex >= static_cast<int>(inv.size())) return;
 
@@ -501,7 +580,7 @@ void CharacterInfoState::equipSelectedItem() {
                 return;
             }
             if (!saveResult) {
-                static_cast<void>(party.loadFromFile());
+                party.restoreCheckpoint(checkpoint);
                 m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_EQUIP_ROLLBACK");
                 return;
             }
@@ -524,6 +603,7 @@ void CharacterInfoState::equipSelectedItem() {
 
 void CharacterInfoState::unequipSelectedSlot() {
     auto& party = m_game.getParty();
+    const PartyCheckpoint checkpoint = party.captureCheckpoint();
     auto members = party.getMembers();
     if (m_selectedCharIndex >= static_cast<int>(members.size())) return;
     auto caster = members[m_selectedCharIndex];
@@ -555,7 +635,7 @@ void CharacterInfoState::unequipSelectedSlot() {
             return;
         }
         if (!saveResult) {
-            static_cast<void>(party.loadFromFile());
+            party.restoreCheckpoint(checkpoint);
             m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_UNEQUIP_ROLLBACK");
             return;
         }

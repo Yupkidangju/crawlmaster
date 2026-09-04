@@ -16,6 +16,15 @@ namespace crawl {
 
 class Game; // 전방 선언
 
+struct EncounterSpec {
+    EncounterTier tier = EncounterTier::EARLY;
+    std::string fixedMonsterId;
+    std::string questId;
+    std::string worldObjectId;
+    bool bossBattle = false;
+    bool campaignFinal = false;
+};
+
 // 전투 턴 참여 엔티티 구조체 (캐릭터 또는 몬스터)
 struct TurnEntity {
     bool isMonster;                 // 몬스터 여부 플래그
@@ -28,6 +37,7 @@ class CombatState : public GameState {
 public:
     explicit CombatState(Game& game, EncounterTier tier = EncounterTier::EARLY,
                          bool bossBattle = false);
+    CombatState(Game& game, EncounterSpec encounter);
     ~CombatState() override = default;
 
     void handleInput(const sf::Event& event) override;
@@ -45,6 +55,9 @@ private:
     int m_selectedTargetIdx;                        // 플레이어가 타겟팅한 몬스터 인덱스
     EncounterTier m_encounterTier;
     bool m_isBossBattle;
+    bool m_isCampaignFinal = false;
+    std::string m_questId;
+    std::string m_worldObjectId;
     bool m_hasStarted = false;
     bool m_victoryDurabilityUnknown = false;
 
@@ -81,6 +94,7 @@ private:
     bool checkDefeat();                             // 아군 파티 전멸 유무
 
     bool distributeRewards();                       // 승리 보상 정산 및 원자 저장
+    void clearPartyCombatBuffs();
     void addLog(const std::string& msg);            // 전투 로그 버퍼 기록
 
     // UI 텍스트 드로우 컴포넌트

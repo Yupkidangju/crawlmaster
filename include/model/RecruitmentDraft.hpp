@@ -3,9 +3,7 @@
 
 #include "model/Character.hpp"
 
-#include <memory>
 #include <string>
-#include <vector>
 
 namespace crawl {
 
@@ -14,20 +12,38 @@ class SessionRng;
 
 class RecruitmentDraft {
 public:
-    RecruitmentDraft(SessionRng& random, std::vector<std::string> names);
+    explicit RecruitmentDraft(SessionRng& random);
 
-    const Character& preview() const;
+    bool setName(const std::string& name);
+    bool setAge(int age);
+    bool setGender(Gender gender);
+    bool setClass(CharacterClass characterClass);
+
+    const CharacterIdentity& identity() const;
+    const AbilityScore& baseAbilities() const;
+    const AbilityScore& abilities() const;
+    int remainingPoints() const;
+    int increaseCost(Ability ability) const;
+    bool increase(Ability ability);
+    bool decrease(Ability ability);
     void reroll();
+    bool isReady() const;
+    std::shared_ptr<Character> createCandidate() const;
     bool confirm(Party& party);
+
+    static bool isValidName(const std::string& name);
 
 private:
     SessionRng& m_random;
-    std::vector<std::string> m_names;
-    std::size_t m_nameIndex = 0;
-    std::shared_ptr<Character> m_candidate;
+    CharacterIdentity m_identity;
+    AbilityScore m_baseAbilities;
+    AbilityScore m_abilities;
+    int m_remainingPoints = 10;
     bool m_confirmed = false;
 
-    void createCandidate();
+    static int& select(AbilityScore& scores, Ability ability);
+    static int select(const AbilityScore& scores, Ability ability);
+    void rollAbilities();
 };
 
 } // namespace crawl

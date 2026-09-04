@@ -15,7 +15,8 @@ namespace crawl {
 DungeonRenderer::DungeonRenderer(Game& game) : m_game(game) {}
 
 void DungeonRenderer::render(sf::RenderWindow& window, const DungeonMap& map, const Party& party,
-                             const std::vector<std::string>& logQueue) {
+                             const std::vector<std::string>& logQueue, int floorNumber,
+                             const std::vector<WorldObject>& objects) {
     // 1. 1인칭 와이어프레임 3D 뷰포트 그리기
     draw3DViewport(window, map);
 
@@ -23,7 +24,7 @@ void DungeonRenderer::render(sf::RenderWindow& window, const DungeonMap& map, co
     drawHUDFrame(window, buildPartyHudSnapshot(party));
 
     // 3. 미니맵 그리기 (방문 지역 안개 해제 표시)
-    drawMiniMap(window, map);
+    drawMiniMap(window, map, party, floorNumber, objects);
 
     // 4. 로그 메시지 그리기
     drawLogWindow(window, logQueue);
@@ -124,7 +125,8 @@ void DungeonRenderer::draw3DViewport(sf::RenderWindow& window, const DungeonMap&
     }
 }
 
-void DungeonRenderer::drawMiniMap(sf::RenderWindow& window, const DungeonMap& map) {
+void DungeonRenderer::drawMiniMap(sf::RenderWindow& window, const DungeonMap& map, const Party& party,
+                                  int floorNumber, const std::vector<WorldObject>& objects) {
     float startX = 750.0f;
     float startY = 40.0f;
     float cellSize = 12.0f; // 12x12 크기 격자
@@ -156,11 +158,12 @@ void DungeonRenderer::drawMiniMap(sf::RenderWindow& window, const DungeonMap& ma
                 wallRect.setPosition(cx + 1.0f, cy + 1.0f);
                 wallRect.setFillColor(sf::Color(100, 100, 100)); // 회색 벽면 채우기
                 window.draw(wallRect);
-            } else if (tile == TileType::UPSTAIRS) {
+            } else if (tile == TileType::UPSTAIRS || tile == TileType::DOWNSTAIRS) {
                 // 입구 계단: 노란색/주황색 계열 사각형
                 sf::RectangleShape stairRect(sf::Vector2f(cellSize - 2.0f, cellSize - 2.0f));
                 stairRect.setPosition(cx + 1.0f, cy + 1.0f);
-                stairRect.setFillColor(sf::Color(255, 176, 0)); // Amber
+                stairRect.setFillColor(tile == TileType::UPSTAIRS
+                    ? sf::Color(255, 176, 0) : sf::Color(255, 255, 102));
                 window.draw(stairRect);
             } else {
                 // [v0.6.0] 바닥 (EMPTY, DOOR 등)
@@ -179,6 +182,59 @@ void DungeonRenderer::drawMiniMap(sf::RenderWindow& window, const DungeonMap& ma
         }
     }
 
+    for (const auto& object : objects) {
+        if (object.floor != floorNumber || object.state != WorldObjectState::DISCOVERED ||
+            !party.hasQuest(object.questId) || !map.isVisited(object.x, object.y)) continue;
+        const float cx = startX + object.x * cellSize + cellSize / 2.0f;
+        const float cy = startY + object.y * cellSize + cellSize / 2.0f;
+        if (object.kind == WorldObjectKind::QUEST_ITEM) {
+            sf::ConvexShape marker(4);
+            marker.setPoint(0, {0.0f, -4.0f}); marker.setPoint(1, {4.0f, 0.0f});
+            marker.setPoint(2, {0.0f, 4.0f}); marker.setPoint(3, {-4.0f, 0.0f});
+            marker.setFillColor(sf::Color(255, 176, 0));
+            marker.setPosition(cx, cy);
+            window.draw(marker);
+        } else if (object.kind == WorldObjectKind::NPC) {
+            sf::RectangleShape marker({7.0f, 7.0f});
+            marker.setOrigin(3.5f, 3.5f);
+            marker.setPosition(cx, cy);
+            marker.setFillColor(sf::Color::Transparent);
+            marker.setOutlineColor(sf::Color(102, 255, 255));
+            marker.setOutlineThickness(2.0f);
+            window.draw(marker);
+        } else {
+            sf::RectangleShape horizontal({9.0f, 3.0f});
+            sf::RectangleShape vertical({3.0f, 9.0f});
+            horizontal.setOrigin(4.5f, 1.5f); vertical.setOrigin(1.5f, 4.5f);
+            horizontal.setPosition(cx, cy); vertical.setPosition(cx, cy);
+            horizontal.setFillColor(sf::Color(255, 51, 51));
+            vertical.setFillColor(sf::Color(255, 51, 51));
+            window.draw(horizontal); window.draw(vertical);
+        }
+    }
+
+    sf::Text floorLabel;
+    floorLabel.setFont(m_game.getFont());
+    floorLabel.setCharacterSize(LocalizationManager::getInstance().getScaledTextSize(14));
+    floorLabel.setFillColor(sf::Color(255, 176, 0));
+    std::string label = LocalizationManager::getInstance().format(
+        "DUNGEON_FLOOR_LABEL", {{"floor", std::to_string(floorNumber)}});
+    if (LocalizationManager::getInstance().getTextScale() <= 125) {
+        const TileType currentTile = map.getTile(map.getPlayerX(), map.getPlayerY());
+        bool canInteract = currentTile == TileType::UPSTAIRS || currentTile == TileType::DOWNSTAIRS;
+        for (const auto& object : objects) {
+            if (object.floor == floorNumber && object.x == map.getPlayerX() &&
+                object.y == map.getPlayerY() && object.state != WorldObjectState::RESOLVED &&
+                object.kind != WorldObjectKind::QUEST_BOSS && party.hasQuest(object.questId)) {
+                canInteract = true;
+            }
+        }
+        if (canInteract) label += " | " + LocalizationManager::getInstance().get("DUNGEON_INTERACT_PROMPT");
+    }
+    floorLabel.setString(sf::String::fromUtf8(label.begin(), label.end()));
+    floorLabel.setPosition(startX, 285.0f);
+    window.draw(floorLabel);
+
     // 플레이어 마커 그리기
     int px = map.getPlayerX();
     int py = map.getPlayerY();
@@ -187,21 +243,21 @@ void DungeonRenderer::drawMiniMap(sf::RenderWindow& window, const DungeonMap& ma
     float pMux = startX + px * cellSize + cellSize / 2.0f;
     float pMuy = startY + py * cellSize + cellSize / 2.0f;
 
-    sf::Text playerMarker;
-    playerMarker.setFont(m_game.getFont());
-    
+    sf::ConvexShape playerMarker(3);
+    playerMarker.setPoint(0, sf::Vector2f(0.0f, -5.0f));
+    playerMarker.setPoint(1, sf::Vector2f(4.5f, 4.5f));
+    playerMarker.setPoint(2, sf::Vector2f(-4.5f, 4.5f));
+    playerMarker.setFillColor(sf::Color(102, 255, 255));
+    playerMarker.setOutlineColor(sf::Color(2, 6, 2));
+    playerMarker.setOutlineThickness(1.0f);
+    playerMarker.setPosition(pMux, pMuy);
+
     switch (pdir) {
-        case Direction::NORTH: playerMarker.setString("^"); break;
-        case Direction::EAST:  playerMarker.setString(">"); break;
-        case Direction::SOUTH: playerMarker.setString("v"); break;
-        case Direction::WEST:  playerMarker.setString("<"); break;
+        case Direction::NORTH: playerMarker.setRotation(0.0f); break;
+        case Direction::EAST: playerMarker.setRotation(90.0f); break;
+        case Direction::SOUTH: playerMarker.setRotation(180.0f); break;
+        case Direction::WEST: playerMarker.setRotation(270.0f); break;
     }
-    
-    playerMarker.setCharacterSize(LocalizationManager::getInstance().getScaledTextSize(14));
-    playerMarker.setFillColor(sf::Color(102, 255, 102)); // 밝은 네온 그린
-    sf::FloatRect textBounds = playerMarker.getLocalBounds();
-    playerMarker.setOrigin(textBounds.left + textBounds.width / 2.0f, textBounds.top + textBounds.height / 2.0f);
-    playerMarker.setPosition(pMux, pMuy - 2.0f); // 폰트 중심 미세 수평 오프셋 조정
 
     window.draw(playerMarker);
 }

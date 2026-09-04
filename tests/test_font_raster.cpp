@@ -73,7 +73,7 @@ int main(int argc, char* argv[]) {
             localization.get("TITLE_SUBTITLE"),
             localization.get("TOWN_CAMP_WELCOME"),
             localization.get("TOWN_CAMP_OPTION_1"),
-            localization.get("GUILD_PREVIEW_GUIDE"),
+            localization.get("CREATE_IDENTITY_GUIDE"),
             item->getName() + " — " + item->getDescription(),
             monster->getName(),
             skill->getName() + " — " + skill->getDescription(),

@@ -10,11 +10,11 @@
 * **프로젝트명:** Crawlmaster (크롤마스터)
 * **장르:** 1인칭 그리드 기반 3D 던전 탐험 RPG (Classic Wizardry 및 d20 D&D 5e 룰 기반)
 * **플랫폼/기술:** C++20, SFML (Simple and Fast Multimedia Library)를 이용한 그래픽/입력 처리 및 1인칭 와이어프레임 소프트웨어 3D 렌더링.
-* **현재 제품 lane:** 정식 출시 이전의 **한 층짜리 상용 데모 후보**. Early Access 및 1.0 출시 완료를 주장하지 않는다.
+* **현재 제품 lane:** 정식 출시 이전의 **3층 영속 던전 데모 후보**. Early Access 및 1.0 출시 완료를 주장하지 않는다.
 * **대상 사용자:** 키보드 중심의 고전 던전 탐험, 파티 구성, 턴제 d20 전투를 선호하는 싱글 플레이 사용자.
-* **검증 플랫폼:** Ubuntu 24.04 x86_64와 그 ABI/runtime 요구사항을 충족하는 Linux. X11/Xrandr/Xcursor/udev/FreeType/OpenGL 런타임이 필요하다. Windows Server 2022 hosted MSVC build/test/package/startup은 source `4f988483bf5cbcfdce4c79a6aabab4a67a7043f9`에서 검증했다. clean Windows 10/11의 VC++ runtime 전제, high-DPI와 장시간 실기는 `UNVERIFIED`, macOS는 현재 범위 밖이다.
+* **검증 플랫폼:** Ubuntu 24.04 x86_64와 그 ABI/runtime 요구사항을 충족하는 Linux. X11/Xrandr/Xcursor/udev/FreeType/OpenGL 런타임이 필요하다. Windows Server 2022 hosted 증거는 0.9.4 source `4f988483bf5cbcfdce4c79a6aabab4a67a7043f9`에만 유효하며 현재 v0.10 tree의 Windows build/test/package/startup·attestation은 `UNVERIFIED`다. clean Windows 10/11, high-DPI와 장시간 실기도 `UNVERIFIED`, macOS는 현재 범위 밖이다.
 * **가격 정책:** 미정(TBD). 배포·권리·접근성 gate가 닫히기 전에는 유료 출시 가능 상태로 표시하지 않는다.
-* **주요 목표:** 마을 정비 -> 한 층 탐험 -> 랜드마크/보상 -> 최종 전투 -> 결과 화면으로 이어지는 완결 가능한 수직 슬라이스와 D&D 5e 스타일 캐릭터 시뮬레이션.
+* **주요 목표:** 마을 정비 -> 3층 영속 탐험 -> 목적형 퀘스트 -> 최종 전투 -> 결과 화면으로 이어지는 완결 가능한 수직 슬라이스와 D&D 5e 스타일 캐릭터 시뮬레이션.
 
 ## 3. 목표와 성공 기준
 * **목표:**
@@ -27,7 +27,7 @@
 * **성공 기준 (완료 정의):**
   * 게임을 실행하여 캐릭터 4명을 생성하고 파티를 짠 후 저장할 수 있다.
   * 던전에 진입하여 무작위로 생성된 20x20 미로를 1인칭 3D 와이어프레임으로 탐험할 수 있다.
-  * 미니맵에 방문한 벽과 바닥이 정상 표시되며, 밟은 바닥은 네온 그린으로 하이라이트된다.
+  * 미니맵에 방문한 벽과 바닥이 정상 표시되며, 밟은 바닥은 네온 그린, 현재 파티 위치는 청록색 방향 삼각형으로 구분된다.
   * 미니맵의 탐험된 빈 바닥을 마우스로 클릭하면 BFS 최단 경로를 따라 벽을 우회하며 0.1초 간격으로 한 칸씩 자동 이동한다.
   * 던전 내에서 몬스터를 조우하여(자동 이동 도중 포함) 턴제 전투를 통해 무찌르거나 도망칠 수 있다.
   * 수집한 아이템이나 몬스터 처치 수를 기반으로 퀘스트를 완료하고 마을 상점에서 장비를 매매한 뒤, 캐릭터 상태가 세이브 파일에 정상 반영된다.
@@ -35,7 +35,7 @@
   * 던전의 랜드마크와 최종 목표에 도달하여 보스 전투를 끝내고 결과 화면을 확인할 수 있다. 한 런의 설계 목표는 30~60분이며 실제 플레이테스트 전까지 이 수치는 `UNVERIFIED`다.
   * 타이틀에서 New Game과 Continue가 분리되고, 파괴적 초기화는 확인 전에는 실행되지 않는다.
   * 타이틀 화면 및 게임 플레이 도중 설정(Settings) 화면에 진입할 수 있으며(단축키: O키), 5개 국어(한국어, 영어, 일본어, 중국어 번체/간체) i18n 실시간 전환과 조작 가이드를 제공한다.
-  * Debug/Release 빌드, 등록된 CTest, Linux 재배치 패키지 smoke가 모두 통과해야 데모 후보로 판정한다. Windows hosted gate는 통과했지만 clean Windows 10/11 runtime과 실제 high-DPI/장시간 실기 gate 전에는 상용 지원 플랫폼 PASS로 승격하지 않는다.
+  * Debug/Release 빌드, 등록된 CTest, Linux 재배치 패키지 smoke가 모두 통과해야 데모 후보로 판정한다. 현재 v0.10 Windows hosted gate와 실제 high-DPI/장시간 실기 gate 전에는 상용 지원 플랫폼 PASS로 승격하지 않는다.
 
 ## 4. 비목표 (Non-Goals)
 * 실시간 3D 그래픽스 및 텍스처 매핑 (와이어프레임 3D 및 단순 평면 드로잉만 적용).
@@ -50,8 +50,8 @@
 * **렌더링 방식:** 현재 플레이어의 위치와 바라보는 방향 벡터를 기준으로 전방 최대 4칸(시야 거리)의 그리드 벽 데이터를 투영 계산하여 SFML `sf::VertexArray` (Lines/LineStrip)로 직접 투영 및 선 그리기.
 * **파티 인원:** 최대 4인 파티 구성.
 * **세이브 포맷:** UTF-8 JSON 파일 (`save.json`).
-* **세이브 시점:** 마을과 종결 결과에서만 checkpoint를 기록한다. 활성 던전 좌표/FOW/전투 중간 재개는 데모 범위에서 지원하지 않는다.
-* **TPK:** 현재 던전 런만 종료하고 마지막 정상 town checkpoint를 복구한다. TPK가 정상 저장 파일을 삭제하거나 덮어쓰지 않는다.
+* **세이브 시점:** 마을, 탐험 autosave, 층/목표 전이, 전투 정산과 종결 결과에서 전체 세션 checkpoint를 기록한다. 활성 던전 좌표와 전투 중간 재개는 지원하지 않는다.
+* **TPK:** 현재 전투를 종료하고 가장 최근 성공한 전체 세션 checkpoint의 Party·Quest·World·RNG를 함께 복구한다. TPK가 정상 저장 파일을 삭제하거나 덮어쓰지 않는다.
 * **난이도/판정:** 프로세스 세션이 소유하는 하나의 `std::mt19937` stream을 사용한다. 시작 seed는 로그와 저장 메타데이터에 남기며 테스트에서 주입할 수 있어야 한다.
 * **오디오:** 현재 비목표다. 실제 오디오 구현 전까지 BGM/SFX 볼륨을 작동하는 설정처럼 노출하지 않는다.
 
@@ -62,7 +62,7 @@
 * **아키텍처 패턴:** MVC (Model-View-Controller) 패턴을 차용한 상태 엔진 구조.
   * **Model:** 게임 데이터 (Character, Party, Inventory, Map, Monster, Quest, Skill)
   * **View:** SFML 기반 `DungeonRenderer`. Town/Combat/CharacterInfo/Settings 화면은 현재 각 State가 직접 렌더링하며, 존재하지 않는 renderer를 책임 파일로 문서화하지 않는다.
-  * **Controller:** GameStateManager 및 각 State별 입력 핸들러 (TitleState, TownState, DungeonState, CombatState, CharacterInfoState)
+  * **Controller:** GameStateManager 및 각 State별 입력 핸들러 (TitleState, TownState, DungeonState, CombatState, CharacterInfoState, QuestJournalState, ShutdownState)
 * **메모리 관리:** raw pointer 사용을 최소화하고 `std::unique_ptr` 및 `std::shared_ptr`으로 소유권을 표현하며, 테스트와 도구로 수명 오류를 점검한다.
 
 ## 7. 런타임/빌드 파이프라인
@@ -136,6 +136,13 @@ stateDiagram-v2
 ## 10. 시스템 명세
 
 ### 10.1 캐릭터 모델 및 D&D 룰 명세
+* **캐릭터 생성 흐름:**
+  * 길드에서 이름, 나이, 성별, 직업을 선택한 뒤 능력치를 굴리고 10포인트를 모두 배분한 후 최종 확인한다.
+  * 이름은 앞뒤 공백을 제거한 Unicode 1~16자이며 제어문자를 허용하지 않는다. 나이는 18~80, 신규 캐릭터 성별은 남성/여성/논바이너리 중 하나다.
+  * 나이와 성별은 캐릭터 표현 정보이며 능력치나 전투 판정에는 영향을 주지 않는다.
+  * 능력치 6종은 각각 `4d6` 중 최저값을 제외한 합으로 생성한다. `R` 리롤은 횟수 제한이 없고 배분을 초기화하며 세션 RNG를 사용한다.
+  * 증가 후 점수가 12 이하면 1점, 13~15면 2점, 16~18이면 3점을 소비한다. 18을 초과할 수 없고 감소 시 실제 소비 비용을 환급하되 최초 롤 아래로 내릴 수 없다.
+  * 10포인트를 모두 써야 최종 확인할 수 있다. 확인 전 취소는 파티와 저장 파일을 변경하지 않는다.
 * **능력치 (Abilities):**
   * `STR` (근력), `DEX` (민첩), `CON` (건강), `INT` (지능), `WIS` (지혜), `CHA` (매력)
   * 능력치에 따른 보정치 공식: `Modifier = floor((Score - 10) / 2)`
@@ -144,6 +151,11 @@ stateDiagram-v2
   * **마법사 (Mage):** Hit Die `d6`. 주 능력치 `INT`. 초기 장비: 마법 지팡이, 로브. 특화 스킬: 레벨업에 따라 Magic Missile (`spl_magic_missile`), Sleep (`spl_sleep`), Fireball (`spl_fireball`) 주문 습득. 1레벨 주문 슬롯 2개로 시작하여 레벨당 증가.
   * **도적 (Rogue):** Hit Die `d8`. 주 능력치 `DEX`. 초기 장비: 단검, 가죽 갑옷. 특화 스킬: 레벨업에 따라 Sneak Attack (`skl_sneak_attack`), Poison Dart (`skl_poison_dart`), Shadowstrike (`skl_shadowstrike`) 습득.
   * **성직자 (Cleric):** Hit Die `d8`. 주 능력치 `WIS`. 초기 장비: 메이스, 체인 메일, 방패. 특화 스킬: 레벨업에 따라 Cure Wounds (`spl_cure_wounds`), Bless (`spl_bless`), Prayer of Healing (`spl_prayer_of_healing`) 주문 습득. 1레벨 주문 슬롯 2개로 시작하여 레벨당 증가.
+* **레벨 1 직업 고유 특성:**
+  * **전사 - 방어 전투술:** 방어구 장착 중 AC `+1`.
+  * **도적 - 빠른 반사신경:** 우선권 판정 `+2`.
+  * **마법사 - 비전 강화:** 피해 주문이 영향을 주는 각 적에게 최종 피해 `+2`.
+  * **성직자 - 신성한 은총:** 치유 주문이 영향을 주는 각 아군의 회복량 `+2`.
 * **전투 스탯:**
   * `AC` (Armor Class, 방어도): `10 + DEX 보정치 + 장착 갑옷 AC 보너스 + 장착 방패 AC 보너스`
     * 단, 체인 메일(`arm_chain`) 착용 시 DEX 보정치 없이 고정 AC 16.
@@ -183,7 +195,17 @@ stateDiagram-v2
 
 ### 10.4 퀘스트 시스템 명세
 * **퀘스트 구조:**
-  * ID, 이름, 타입(`KILL`, `COLLECT`), 대상 ID, 목표 수량, 현재 진행 수량, 골드/경험치 보상.
+  * ID, 이름, 타입(`DEFEAT_BOSS`, `RETRIEVE_KEY_ITEM`, `FIND_NPC`), 대상 ID/층, `ACTIVE|READY_TO_REPORT` 상태, 골드/경험치/아이템 보상.
+  * 신규 보드는 `qst_recover_moon_seal`, `qst_defeat_crypt_warden`, `qst_find_missing_scout`만 제공한다. v1~v3에서 로드한 기존 수량형 활성 퀘스트는 완료/보고만 허용한다.
+  * 세 퀘스트는 동시에 수주할 수 있다. 현장 목표 해결은 보상을 지급하지 않으며 성에서 보고하고 저장이 커밋될 때 정확히 한 번 지급한다.
+  * 중요품은 일반 인벤토리와 분리되어 판매·사용·장착·폐기할 수 없고 보고 시 소비된다.
+
+### 10.4.1 3층 영속 월드
+* 새 게임은 session seed를 `worldSeed`로 사용해 3개의 20x20 맵을 한 번 생성하고 save schema v4에 전체 snapshot을 기록한다.
+* 층별 seed는 `splitmix32(worldSeed + 0x9E3779B9 * floorNumber)`이며 월드 생성은 전역 전투 RNG draw count를 소비하지 않는다.
+* 1층은 시작/하행 계단과 회수품, 2층은 상·하행 계단과 퀘스트 보스, 3층은 상행 계단·NPC·최종 BossGate를 가진다. 모든 예약 타일은 중복 없이 도달 가능해야 한다.
+* 지형, `visited`, `stepped`, 오브젝트의 `PRESENT|DISCOVERED|RESOLVED` 상태는 New Game 전까지 유지한다. Continue와 마을 재입장은 1층 입구에서 시작하며 던전 좌표 중간 재개는 지원하지 않는다.
+* `E`는 계단, 중요품, NPC 상호작용 키다. 활성 퀘스트 보스 칸 진입은 도주 불가 고정 전투를 시작한다. 최종 Dragon Whelp만 캠페인 Victory를 발생시킨다.
 
 ## 11. 경계 타입과 계약 (Typed Contracts)
 
@@ -194,6 +216,24 @@ enum class CharacterClass {
     MAGE,
     ROGUE,
     CLERIC
+};
+
+enum class Gender {
+    MALE,
+    FEMALE,
+    NON_BINARY,
+    UNSPECIFIED // v1/v2 저장 이관 전용
+};
+
+struct CharacterIdentity {
+    std::string name;
+    int age;
+    Gender gender;
+    CharacterClass characterClass;
+};
+
+enum class Ability {
+    STRENGTH, DEXTERITY, CONSTITUTION, INTELLIGENCE, WISDOM, CHARISMA
 };
 
 // 2. 능력치 구조체
@@ -302,27 +342,41 @@ public:
 ```
 
 ## 12. 저장/설정/진행 정책
-* **스키마 버전:** `schemaVersion: 2`. 버전이 없는 기존 snake_case 저장은 v1로 읽어 v2 메모리 모델로 마이그레이션한다.
+* **세이브 스키마 버전:** `schemaVersion: 4`. v1~v3 저장은 파티 진행을 보존하고 저장된 session seed에서 3층 월드를 결정론적으로 생성해 v4 메모리 모델로 마이그레이션한다.
   * v1 예제는 `tests/fixtures/save_v1.json`에만 두며 제품 기본 저장이나 package 입력으로 취급하지 않는다.
+  * v1/v2 캐릭터는 `age: 0`, `gender: "unspecified"`로 이관한다. 신규 생성은 `age` 18~80과 `male|female|non_binary`만 허용한다.
 * **저장 위치:** OS별 per-user data directory의 UTF-8 `save.json` 및 `config.json`.
 * **내구성:** 같은 디렉터리의 임시 파일에 쓰고 flush/fsync가 성공한 뒤 원본을 `.bak`으로 회전하고 원자 교체한다. 실패 시 마지막 정상 원본을 유지하고 typed result를 UI에 전달한다.
+  * primary/backup save의 leaf symlink는 read/write 모두 거부한다. OS가 제공하거나 사용자가 지정한 per-user data parent 경로의 symlink/junction은 신뢰하되 Windows reparse-point 실기는 `UNVERIFIED`다.
 * **손상 복구:** 손상 파일은 `.corrupt-<timestamp>.json`으로 격리한다. 유효한 `.bak`이 있으면 복구 후보로 읽되 손상 원본을 자동 초기화하지 않는다. 백업도 없으면 New Game을 명시적으로 선택하기 전까지 디스크를 덮어쓰지 않는다.
-* **초기 저장값:** `100 Gold`, `pot_heal` 2개, `pot_mana` 1개, 파티원/활성·완료 퀘스트 없음, `campaignCompleted: false`.
-* **진행 정책:** 던전 중간 재개는 지원하지 않는다. 마지막 town checkpoint와 campaign completion만 저장한다.
-* **TPK 정책:** 마지막 town checkpoint로 돌아가며 파일 초기화와 별개다. New Game만 확인 후 새 기본 저장을 쓴다.
+  * TPK 또는 Title Continue가 checkpoint를 복구하지 못하면 기존 in-memory Party는 진단용으로 보존하되 `recoveryPending`이 된다. 이 상태에서는 일반 저장과 종료 자동 저장을 금지한다.
+  * 성공적인 checkpoint load 또는 확인된 New Game만 `recoveryPending`을 해제한다. memory-only `resetToDefault()`는 해제 권위가 아니다.
+  * primary가 없고 backup만 손상된 경우에도 backup을 고유 quarantine path로 이동하고 같은 candidate를 반복 시도하지 않는다.
+* **초기 저장값:** `100 Gold`, `pot_heal` 2개, `pot_mana` 1개, 파티원/활성·완료 퀘스트/중요품 없음, 신규 3층 월드, `campaignCompleted: false`.
+* **진행 정책:** 던전 중간 좌표 재개는 지원하지 않는다. 월드 snapshot과 현재 Party/Quest/RNG를 하나의 전체 세션 checkpoint로 저장한다.
+  * 탐험 변경은 최대 2초 간격으로 합쳐 저장하고 층 이동, 목표 해결, 전투 정산, 마을 귀환과 정상 창 종료에서 즉시 저장한다. 비정상 종료 시 마지막 성공 checkpoint 이후 최대 2초의 안개 변경은 손실될 수 있다.
+* **TPK 정책:** 가장 최근 성공한 전체 세션 checkpoint로 돌아가며 파일 초기화와 별개다. New Game만 확인 후 새 기본 저장을 쓴다.
 * **설정 기본값:** 언어 `KO`. 오디오는 비목표이므로 volume 필드는 v1 호환 읽기만 하고 v2 canonical config에는 쓰지 않는다.
 * **RNG checkpoint:** `SessionRng`는 session seed와 원시 `mt19937` draw count를 기록한다. save는 `lastSessionSeed`와 `sessionRngDrawCount`를 함께 저장하며 Continue는 두 값을 복원한 다음 난수부터 이어간다. New Game은 새 entropy seed를 만든 뒤 최초 checkpoint를 저장한다.
+  * v1/v2처럼 seed가 없는 legacy save는 canonical JSON에 version salt를 더한 FNV-1a 32-bit 값에서 non-zero seed를 결정론적으로 만들고 world/RNG 양쪽에 같은 seed와 draw count 0을 사용한다.
+  * mutation 저장이 pre-commit 실패하면 디스크 재로드가 아니라 작업 직전 in-memory snapshot으로 Party·Quest·World와 global RNG를 함께 복원한다.
+* **v4 엄격성:** v4 root/character/quest/world의 canonical 필드는 모두 필수다. 누락·unknown ID·중복 ID·교차 상태 불일치는 `Corrupt`이며 tolerant default는 v1~v3 이관에만 허용한다.
+* **멱등성:** gameplay와 RNG 소비가 없는 `save -> load -> save`는 set 기반 필드를 정렬하여 exact byte가 같아야 한다.
+* **종료:** 활성 세션의 정상 창 닫기는 저장 `Saved`에서만 즉시 종료한다. 일반 save failure/`CommittedDurabilityUnknown`은 저장 재시도 또는 저장 없이 종료를 제공한다. `recoveryPending`에서는 자동 저장하지 않고 Enter로 checkpoint load를 재시도하거나 Esc로 저장 없이 종료한다.
 
-* **저장 결과 계약:** `PersistenceResult{status, path, message}`를 사용한다. `Saved/Loaded/NotFound/RecoveredFromBackup/CommittedDurabilityUnknown/Corrupt/UnsupportedVersion/IoError`를 구분한다. `CommittedDurabilityUnknown`은 교체는 완료됐지만 directory fsync 확인이 실패한 상태이며 미커밋 실패로 롤백하지 않는다.
-* **저장 파일 구조 계약 (Save File Contract - save.json v2):**
+* **저장 결과 계약:** `PersistenceResult{status, path, message}`를 사용한다. `Saved/Loaded/NotFound/RecoveredFromBackup/CommittedDurabilityUnknown/Corrupt/UnsupportedVersion/IoError/RecoveryPending`을 구분한다. `RecoveryPending`은 복구 성공 또는 명시적 New Game 전까지 write가 금지된 상태다.
+* **저장 파일 구조 계약 (Save File Contract - save.json v4):**
   ```json
   {
-      "schemaVersion": 2,
+      "schemaVersion": 4,
       "gold": 100,
       "inventory": ["pot_heal", "pot_heal", "pot_mana"],
+      "keyItems": ["key_moon_seal"],
       "members": [
           {
               "name": "Ragnar",
+              "age": 20,
+              "gender": "male",
               "class": 0,
               "level": 1,
               "hp": 12,
@@ -349,16 +403,32 @@ public:
       ],
       "activeQuests": [
           {
-              "id": "qst_clear_kobolds",
-              "currentCount": 2
+              "id": "qst_recover_moon_seal",
+              "type": 3,
+              "targetId": "key_moon_seal",
+              "targetCount": 1,
+              "currentCount": 1,
+              "readyToReport": true,
+              "targetFloor": 1
           }
       ],
       "completedQuestIds": [],
       "campaignCompleted": false,
       "lastSessionSeed": 0,
-      "sessionRngDrawCount": 0
+      "sessionRngDrawCount": 0,
+      "world": {
+          "version": 1,
+          "seed": 305419896,
+          "floors": [
+              {"tiles": ["####################"], "visited": ["00000000000000000000"], "stepped": ["00000000000000000000"]}
+          ],
+          "objects": [
+              {"id": "obj_moon_seal", "questId": "qst_recover_moon_seal", "targetId": "key_moon_seal", "kind": "quest_item", "state": "resolved", "floor": 1, "x": 17, "y": 15}
+          ]
+      }
   }
   ```
+  * 위 `floors`/`objects` 배열은 필드 형태를 보여주기 위해 축약했다. 실제 저장은 정확히 3개 층, 층마다 20자의 `tiles/visited/stepped` 행 20개와 canonical 목표 3개를 포함한다.
 
 * **설정 파일 구조 계약 (Config File Contract - config.json):**
   ```json
@@ -390,6 +460,7 @@ public:
   * 미답지: 검정색 (`COLOR_BG`).
 * **자동 이동 알고리즘:**
   * 미니맵 마우스 왼쪽 클릭 좌표 역산 -> BFS 최단 경로 산출 -> 0.1초 딜레이 칸 이동 -> 10% 인카운터 판정 (인카운터 시 즉시 파기 및 전투 진입). 키 입력 시 캔슬.
+  * 자동 이동도 quest boss/BossGate 칸에 실제 진입하면 전투를 시작한다. 중요품·NPC·계단은 목적지 또는 중간 노드여도 `E` 없이는 활성화하지 않는다.
 
 ### 10.6 캐릭터 정보 관리 및 인벤토리 시스템 명세
 * 마을/던전에서 `I`/`C` 누르면 `CharacterInfoState`로 `pushState` 진입. `ESC` 등으로 `popState`.
@@ -432,9 +503,10 @@ public:
   * 모험가들의 기본적인 지원을 위해 상점 구매(`SHOP_BUY`) 카탈로그에는 기본 물품 8종(`wpn_dagger`, `wpn_longsword`, `wpn_mace`, `arm_leather`, `arm_scale`, `arm_chain`, `shd_round`, `pot_heal`)만 상시 진열 및 판매한다.
   * 그 외의 고급 무기/방어구(`wpn_greatsword`, `wpn_staff`, `wpn_rapier`, `arm_robe`, `arm_plate`, `shd_tower`) 및 특수 소모품(`pot_greater_heal`, `pot_mana`, `pot_strength`, `pot_dexterity`, `scr_cure`)은 상점에서 다이렉트로 구매할 수 없으며, 오직 던전 탐험 파밍이나 퀘스트 완료 보상으로만 획득해야 한다.
   * 단, 파티 공용 인벤토리에 들어 있는 모든 종류의 아이템은 상점 판매(`SHOP_SELL`)를 통해 원가 가격의 **50%** 골드로 즉시 처분하여 현금화할 수 있다.
+  * `ItemFactory::getShopCatalog()`는 구매 가능한 위 기본 8종만 반환하며 Town 구매 UI도 이 registry를 사용한다.
 * **던전 획득원:** 일반 전투는 각 몬스터의 drop 후보가 있을 때 승리 정산마다 35% 확률로 후보 중 1개를 지급한다. 최종 `mon_dragon_whelp` 전투는 `arm_plate`와 `shd_tower`를 모두 보장 지급한다.
   * Goblin=`pot_mana`, Skeleton=`wpn_greatsword`, Giant Spider=`scr_cure`, Orc=`wpn_rapier`, Goblin Shaman=`pot_strength|pot_dexterity`, Ghoul=`pot_greater_heal`, Dragon Whelp=`arm_plate|shd_tower`.
-* **퀘스트 item reward:** Kobold=`pot_strength`, Mace=`wpn_rapier`, Spider=`scr_cure`+`pot_greater_heal`. 완료 ID는 저장되어 같은 퀘스트가 다시 보상되지 않는다.
+* **퀘스트 item reward:** Moon Seal=`pot_strength`, Crypt Warden=`wpn_rapier`, Missing Scout=`scr_cure`+`pot_greater_heal`. 완료 ID는 저장되어 같은 퀘스트가 다시 보상되지 않는다.
 
 ### 14.2 몬스터 대폭 확장 목록
 | ID | 이름 | Tier | HP | AC | 주 공격 | XP | 특수 행동 / 상태이상 유발 |
@@ -447,13 +519,16 @@ public:
 | `mon_goblin_shaman`| 고블린 주술사 | 2 | 12 | 11 | 지팡이 (1d4) | 100 | 매 턴 35% 확률로 **Magic Missile** (1d4+1 자동 필중 마법 피해) 시전 |
 | `mon_ghoul` | 구울 | 3 | 18 | 12 | 발톱 (1d8 + 2) | 120 | 공격 적중 시 20% 확률로 대상에게 **마비(Paralysis)** 유발 |
 | `mon_dragon_whelp` | 새끼 용 | 4 | 35 | 14 | 물기 (1d8 + 3) | 250 | 최종 관문 전용; 3턴마다 **화염 브레스** 발사 |
+| `mon_crypt_warden` | 묘실 수호자 | 3 | 28 | 14 | 철퇴 (1d8 + 3) | 200 | 2층 퀘스트 전용; 일반 조우/드롭 풀 제외 |
 
 ### 14.3 퀘스트 기본 목록
-| ID | 이름 | 타입 | 대상 | 목표 수량 | 골드 보상 | XP 보상 |
+| ID | 이름 | 타입 | 층/대상 | 골드 | XP | 아이템 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `qst_clear_kobolds` | 코볼트 소탕 | KILL | `mon_kobold` | 5 마리 | 50 G | 100 XP |
-| `qst_collect_maces` | 메이스 회수 | COLLECT | `wpn_mace` | 2 개 | 80 G | 150 XP |
-| `qst_hunt_spiders` | 거미 사냥 | KILL | `mon_giant_spider`| 3 마리 | 100 G | 200 XP |
+| `qst_recover_moon_seal` | 월광 인장 회수 | RETRIEVE_KEY_ITEM | B1 / `key_moon_seal` | 75 G | 150 XP | `pot_strength` |
+| `qst_defeat_crypt_warden` | 묘실 수호자 토벌 | DEFEAT_BOSS | B2 / `mon_crypt_warden` | 150 G | 300 XP | `wpn_rapier` |
+| `qst_find_missing_scout` | 실종 정찰병 수색 | FIND_NPC | B3 / `npc_missing_scout` | 200 G | 400 XP | `scr_cure`, `pot_greater_heal` |
+
+`qst_clear_kobolds`, `qst_collect_maces`, `qst_hunt_spiders`는 v1~v3 활성 세이브의 완료/보고를 위한 legacy registry에만 남긴다.
 
 ## 15. 단계별 로드맵
 * **Phase 1~4:** 기반 시스템 완료 (이전 버전 작업 완료).
@@ -480,6 +555,10 @@ public:
   * `TestHarness`는 사용자 게임 저장소가 아닌 고유 임시 디렉터리를 기본 세이브 경로로 사용하고, 테스트 전후 사용자 `save.json`·`config.json`의 바이트 불변성을 단언한다.
   * Town 허브가 참조하는 필수 번역 키는 5개 언어 JSON에 동일하게 존재해야 하며, 누락 시 회귀 테스트가 실패한다.
   * CJK 폰트의 실제 혼합 문자열 가독성과 제3자 자산 재배포 근거는 별도 릴리즈 게이트로 관리하며, 코드포인트 존재 검사만으로 완료 처리하지 않는다.
+* **Phase 11: [v0.10.0] 3층 영속 월드와 목적형 퀘스트**
+  * New Game 귀속 `DungeonWorld`, schema v4 전체 snapshot과 v1~v3 결정론적 이관.
+  * 회수·2층 고정 보스·3층 NPC 탐색, 중요품과 성 보고 일회성 보상.
+  * `E` 상호작용, `Q` 일지, 층/발견 목표 미니맵 표시와 5 locale raster 검증.
 
 ## 16. 명령어와 검증 기준
 * **빌드 및 실행 명령어:**
@@ -498,19 +577,21 @@ public:
   ```
 * 테스트는 `assert`에 의존하지 않는 Release-safe expectation을 사용한다. 의도적 실패는 non-zero exit로 검증한다.
 * Linux 패키지는 임의의 process CWD에서 기동하고 bundled asset을 찾을 수 있어야 한다.
-* Windows package는 hosted Windows Server 2022 CI artifact와 5초 startup을 통과했다. 번들되지 않은 MSVC runtime이 없는 clean Windows 10/11 및 실제 high-DPI/장시간 실기는 별도 `UNVERIFIED` gate다.
+* Windows package의 0.9.4 hosted 증거는 current v0.10에 승계하지 않는다. v0.10 immutable commit의 hosted MSVC build/test/package/startup과 attestation은 `UNVERIFIED` gate다.
 
 ## 17. Turn 1 감사 remediation 계약
 
 * **수직 슬라이스:** 시작 계단, 중앙 랜드마크 문, 가장 먼 도달 가능 타일의 보스 관문, `mon_dragon_whelp` 최종 전투, 결과 화면을 한 런으로 연결한다.
 * **콘텐츠 도달성:** 상점 8종과 직업 시작 장비 외 9종은 monster drop 또는 일회성 quest reward에 명시적으로 연결한다. 모든 19개 item은 획득·장착/사용·판매·저장 중 적용 가능한 경로를 갖는다.
-* **퀘스트:** `qst_clear_kobolds`, `qst_collect_maces`, `qst_hunt_spiders`를 모두 런타임에 제공하며 완료 ID를 저장해 중복 보상을 막는다.
+* **퀘스트:** 신규 보드는 `qst_recover_moon_seal`, `qst_defeat_crypt_warden`, `qst_find_missing_scout`를 제공한다. 이전 3개 수량형 퀘스트는 v1~v3 활성 저장 호환용이며 완료 ID가 모든 중복 보상을 막는다.
 * **모집:** 후보의 이름/직업을 preview하고 `Enter`로 확정, `R`로 reroll, `Esc`로 취소한다.
 * **전투 선택:** Item과 `SINGLE_ALLY` 스킬은 item/target preview와 confirm/cancel을 거친다. 효과가 없는 시도는 자원과 행동을 소비하지 않는다.
+  * 이 no-op 비소비 규칙은 CharacterInfo의 비전투 소모품 사용에도 동일하게 적용한다.
+* **퀘스트 API:** 제품 save/UI는 canonical registry ID만 허용한다. public constructor는 registry 정의 구현용이며 `Party::acceptQuest`는 custom/변조 정의를 거부한다.
 * **전투 공식:** 무기 dice count/sides, 자연 1/20, Bless +2, 장비 class/STR 제한, monster damage type resistance, `1d10 * monster tier` 골드를 하나의 규칙 계층과 seed fixture로 검증한다.
 * **난이도 곡선:** 일반 조우는 탐험 진행도 0~33%, 34~66%, 67~99%의 세 tier를 사용한다. Dragon Whelp는 최종 관문 전용이며 일반 조우에서 제외한다.
-* **UI:** HUD는 실제 0~4인 Party snapshot, HP/사망/독/마비/Bless를 표시한다. 본문 16px, 보조문 14px 미만을 사용하지 않고 핵심 텍스트 대비 4.5:1 이상을 목표로 한다.
+* **UI:** HUD와 CharacterInfo는 실제 0~4인 Party snapshot, HP/사망/독/마비/STR·DEX buff/Bless를 표시한다. 고정 1024x768 TUI 본문은 14px, 핵심 상태·선택은 16px 이상이며 핵심 텍스트 대비 4.5:1 이상을 목표로 한다.
 * **i18n/input:** 화면 chrome뿐 아니라 item/monster/skill 이름·설명과 사용자 전투/상태 로그도 locale key+placeholder로 출력한다. `O`는 Town의 모든 substate와 Combat의 플레이어 조작 상태에서 Settings를 열고, `Esc`는 현재 overlay를 먼저 취소한다. 적 턴에는 추가 입력으로 상태를 변형하지 않는다.
 * **i18n 검증:** 5 locale × 75/100/200%에서 key parity, 필수 placeholder, text bounds/wrap/focus/input transcript를 자동 검사하고 실제 CJK raster/high-DPI 판독은 별도 실행 증거가 있을 때만 완료한다.
-* **배포/권리:** Linux 패키지와 Linux/Windows CI를 만들고 source `4f988483bf5cbcfdce4c79a6aabab4a67a7043f9`의 native SLSA/SPDX attestation을 검증했다. 폰트 원출처·재배포 권리와 법률/지원 주체는 사람 승인 전까지 `Human Review Required`이며 상용 PASS를 차단한다.
+* **배포/권리:** source `4f988483bf5cbcfdce4c79a6aabab4a67a7043f9`의 0.9.4 Linux/Windows artifact와 native SLSA/SPDX attestation은 historical evidence다. current v0.10 immutable commit의 hosted 증거는 `UNVERIFIED`이며, 폰트 원출처·재배포 권리와 법률/지원 주체는 사람 승인 전까지 `Human Review Required`다.
 * 이 섹션은 Turn 1 finding과 충돌하는 이전 완료 표현보다 우선한다. 실제 구현·테스트·패키지 증거가 없는 항목은 완료로 표시하지 않는다.

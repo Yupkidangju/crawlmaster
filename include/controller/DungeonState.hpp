@@ -27,7 +27,7 @@ public:
 private:
     friend class ControllerTestAccess;
     Game& m_game;                       // 전역 Game 참조
-    DungeonMap m_map;                   // 20x20 격자 던전 맵 모델
+    int m_floorNumber = 1;
     DungeonRenderer m_renderer;         // 1인칭 3D 및 HUD 렌더러
 
     std::vector<std::string> m_logQueue; // 하단 TUI에 표시될 텍스트 로그 목록
@@ -36,12 +36,20 @@ private:
     std::vector<std::pair<int, int>> m_autoPath;
     size_t m_autoPathIndex = 0;
     sf::Time m_autoMoveElapsed;
+    sf::Time m_persistenceElapsed;
+    bool m_worldDirty = false;
 
     void addLog(const std::string& message); // 로그 메시지 추가 헬퍼
     bool checkCurrentTileLog();              // 플레이어 현재 타일 상태 검출 및 전이
     EncounterTier currentEncounterTier() const;
     void revealFogOfWar();                   // [v0.6.0] 플레이어 위치 기준 미니맵 안개(시야) 해제 함수
     void stepAutoMove();                     // [v0.6.0] 자동 이동의 한 단계를 수행하고 전투 조우 검사 수행
+    void discoverQuestObjects();
+    bool interactCurrentTile();
+    bool changeFloor(int floorNumber);
+    bool persistWorldCheckpoint();
+    DungeonMap& map();
+    const DungeonMap& map() const;
 };
 
 } // namespace crawl

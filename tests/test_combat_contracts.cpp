@@ -36,6 +36,8 @@ std::shared_ptr<crawl::Equipment> equipment(const std::string& id) {
 std::unique_ptr<crawl::Character> characterWithStrength(crawl::CharacterClass characterClass,
                                                         int strength,
                                                         int dexterity = 10) {
+    const bool spellcaster = characterClass == crawl::CharacterClass::MAGE ||
+                             characterClass == crawl::CharacterClass::CLERIC;
     const nlohmann::json fixture = {
         {"name", "ContractHero"},
         {"class", static_cast<int>(characterClass)},
@@ -43,8 +45,8 @@ std::unique_ptr<crawl::Character> characterWithStrength(crawl::CharacterClass ch
         {"xp", 0},
         {"hp", 10},
         {"maxHp", 10},
-        {"spellSlots", 0},
-        {"maxSpellSlots", 0},
+        {"spellSlots", spellcaster ? 2 : 0},
+        {"maxSpellSlots", spellcaster ? 2 : 0},
         {"poisonTurns", 0},
         {"paralysisTurns", 0},
         {"abilities", {
@@ -62,6 +64,21 @@ std::unique_ptr<crawl::Character> characterWithStrength(crawl::CharacterClass ch
         }}
     };
     return crawl::Character::fromJson(fixture);
+}
+
+std::shared_ptr<crawl::Character> spellcaster(crawl::CharacterClass characterClass) {
+    const bool usesSpellSlots = characterClass == crawl::CharacterClass::MAGE ||
+                               characterClass == crawl::CharacterClass::CLERIC;
+    const nlohmann::json fixture = {
+        {"name", "Caster"}, {"class", static_cast<int>(characterClass)},
+        {"level", 1}, {"xp", 0}, {"hp", 20}, {"maxHp", 20},
+        {"spellSlots", usesSpellSlots ? 2 : 0}, {"maxSpellSlots", usesSpellSlots ? 2 : 0},
+        {"poisonTurns", 0}, {"paralysisTurns", 0},
+        {"abilities", {{"strength", 10}, {"dexterity", 10}, {"constitution", 10},
+                       {"intelligence", 10}, {"wisdom", 10}, {"charisma", 10}}},
+        {"equipment", {{"weapon", ""}, {"armor", ""}, {"shield", ""}}}
+    };
+    return std::shared_ptr<crawl::Character>(crawl::Character::fromJson(fixture));
 }
 
 int rollExpectedDice(crawl::SessionRng& random, int count, int sides) {
@@ -310,6 +327,57 @@ void testEncounterTiersExcludeBossAndRestrictEarlyPool() {
     }
 }
 
+void testLevelOneClassTraitsUseCanonicalRules() {
+    auto warrior = characterWithStrength(crawl::CharacterClass::WARRIOR, 14, 10);
+    CHECK(warrior->equip(equipment("arm_scale")));
+    CHECK(warrior->getAc() == 15);
+
+    const auto rogue = characterWithStrength(crawl::CharacterClass::ROGUE, 10, 16);
+    const auto mage = characterWithStrength(crawl::CharacterClass::MAGE, 10, 10);
+    const auto cleric = characterWithStrength(crawl::CharacterClass::CLERIC, 10, 10);
+    CHECK(crawl::CombatRules::initiativeBonus(*rogue) == 2);
+    CHECK(crawl::CombatRules::initiativeBonus(*warrior) == 0);
+    CHECK(crawl::CombatRules::spellDamageBonus(*mage) == 2);
+    CHECK(crawl::CombatRules::spellDamageBonus(*cleric) == 0);
+    CHECK(crawl::CombatRules::healingBonus(*cleric) == 2);
+    CHECK(crawl::CombatRules::healingBonus(*mage) == 0);
+}
+
+void testClassTraitBonusesReachSpellEffects() {
+    auto mage = spellcaster(crawl::CharacterClass::MAGE);
+    auto clericUsingArcaneSpell = spellcaster(crawl::CharacterClass::CLERIC);
+    auto mageTarget = contractSkeleton(1, 200);
+    auto clericTarget = contractSkeleton(1, 200);
+    std::vector<std::shared_ptr<crawl::Character>> noAllies;
+    std::vector<std::shared_ptr<crawl::Monster>> mageFoes{mageTarget};
+    std::vector<std::string> logs;
+    auto missile = crawl::SkillFactory::createSkill("spl_magic_missile");
+    crawl::SessionRng::reseedGlobal(4401U);
+    CHECK(missile->execute(*mage, noAllies, mageFoes, 0, logs));
+    logs.clear();
+    std::vector<std::shared_ptr<crawl::Monster>> clericFoes{clericTarget};
+    crawl::SessionRng::reseedGlobal(4401U);
+    CHECK(missile->execute(*clericUsingArcaneSpell, noAllies, clericFoes, 0, logs));
+    CHECK(clericTarget->getHp() - mageTarget->getHp() == 2);
+
+    auto healingCleric = spellcaster(crawl::CharacterClass::CLERIC);
+    auto healingMage = spellcaster(crawl::CharacterClass::MAGE);
+    auto clericAlly = spellcaster(crawl::CharacterClass::WARRIOR);
+    auto mageAlly = spellcaster(crawl::CharacterClass::WARRIOR);
+    clericAlly->takeDamage(15);
+    mageAlly->takeDamage(15);
+    std::vector<std::shared_ptr<crawl::Character>> clericAllies{clericAlly};
+    std::vector<std::shared_ptr<crawl::Character>> mageAllies{mageAlly};
+    std::vector<std::shared_ptr<crawl::Monster>> noFoes;
+    auto cure = crawl::SkillFactory::createSkill("spl_cure_wounds");
+    crawl::SessionRng::reseedGlobal(4402U);
+    CHECK(cure->execute(*healingCleric, clericAllies, noFoes, 0, logs));
+    logs.clear();
+    crawl::SessionRng::reseedGlobal(4402U);
+    CHECK(cure->execute(*healingMage, mageAllies, noFoes, 0, logs));
+    CHECK(clericAlly->getHp() - mageAlly->getHp() == 2);
+}
+
 } // namespace
 
 int main() {
@@ -320,6 +388,8 @@ int main() {
     testEquipmentEligibilityAndTwoHandedInvariant();
     testRewardUsesOneD10PerMonsterTier();
     testEncounterTiersExcludeBossAndRestrictEarlyPool();
+    testLevelOneClassTraitsUseCanonicalRules();
+    testClassTraitBonusesReachSpellEffects();
 
     if (g_failureCount != 0) {
         std::cerr << "[Result] " << g_failureCount << " combat contract check(s) failed.\n";

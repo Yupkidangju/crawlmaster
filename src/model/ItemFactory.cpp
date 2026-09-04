@@ -91,21 +91,11 @@ std::vector<std::shared_ptr<Item>> ItemFactory::getShopCatalog() {
         createItem("wpn_dagger"),
         createItem("wpn_longsword"),
         createItem("wpn_mace"),
-        createItem("wpn_greatsword"),
-        createItem("wpn_staff"),
-        createItem("wpn_rapier"),
         createItem("arm_leather"),
         createItem("arm_scale"),
         createItem("arm_chain"),
-        createItem("arm_plate"),
         createItem("shd_round"),
-        createItem("shd_tower"),
-        createItem("pot_heal"),
-        createItem("pot_greater_heal"),
-        createItem("pot_mana"),
-        createItem("pot_strength"),
-        createItem("pot_dexterity"),
-        createItem("scr_cure")
+        createItem("pot_heal")
     };
 }
 

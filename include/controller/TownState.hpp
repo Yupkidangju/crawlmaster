@@ -8,7 +8,6 @@
 #include <vector>
 #include <string>
 #include <memory>
-#include "model/RecruitmentDraft.hpp"
 
 namespace crawl {
 
@@ -49,14 +48,9 @@ private:
     void initTexts();                   // UI 텍스트 기본 셋업
     void updateTuiContent();            // 서브 상태에 따라 드로우할 텍스트 동적 재구성
 
-    // 무작위 캐릭터명 생성을 위한 기본 데이터베이스
-    const std::vector<std::string> RANDOM_NAMES = {
-        "Ragnar", "Elminster", "Lirael", "Kaelen", "Valerius", "Morgana", "Garrick", "Sariel"
-    };
-    int m_nameIndex = 0;
-    std::unique_ptr<RecruitmentDraft> m_recruitmentDraft;
     bool m_confirmingDismiss = false;
     int m_pendingSaleIndex = -1;
+    int m_questSelection = 0;
 };
 
 } // namespace crawl

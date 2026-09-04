@@ -44,6 +44,7 @@
 ---
 
 ## 4. 세이브 파일 및 리셋 정책
+> v0.10.0의 월드 저장 범위는 15번 결정이 이 결정을 대체한다. 원자 저장·TPK·New Game 분리 정책은 유지한다.
 * **결정:** UTF-8 JSON 기반 versioned per-user save와 원자 교체/백업을 사용하며, 파티 전멸은 현재 런만 종료하고 마지막 town checkpoint를 복구한다.
 * **배경:**
   고전 RPG의 긴장감은 현재 런의 실패로 표현한다. 저장 손상 복구와 의도적인 New Game/TPK를 같은 초기화 명령으로 합치면 정상 진행이 비가역적으로 사라지므로 서로 다른 typed command로 분리한다.
@@ -51,7 +52,7 @@
   * **TPK 즉시 파일 초기화:** 입력 확인과 복구 수단이 없고 손상 복구와 구분되지 않아 기각했다.
   * **활성 던전 전체 저장:** 한 층 데모의 구현·마이그레이션 복잡도를 키우므로 현재 lane에서는 기각하고 town checkpoint만 저장한다.
 * **의사결정 결과:**
-  * `save.json`과 `config.json`은 OS별 per-user directory에 기록하며 schema v2를 사용한다.
+  * `save.json`과 `config.json`은 OS별 per-user directory에 기록한다. save는 schema v3, config는 schema v2를 사용한다.
   * 같은 디렉터리 임시 파일을 flush/fsync한 뒤 `.bak` 회전과 원자 교체를 수행한다.
   * 손상 파일은 quarantine하고 유효 백업을 우선 복구한다. 자동 초기화는 금지한다.
   * TPK는 `GameOverState`를 거쳐 마지막 town checkpoint를 다시 로드한다. New Game만 명시 확인 후 초기 저장을 만든다.
@@ -118,6 +119,7 @@
 ---
 
 ## 9. Turn 1 감사 후 제품 lane과 종결 범위
+> 한 층 제품 lane은 v0.10.0의 15번 결정으로 대체되었으며, pre-release와 외부 검증 gate는 유지한다.
 
 * **결정:** 현재 제품은 1.0 또는 Early Access가 아니라 Linux x86_64 기준 한 층짜리 상용 데모 후보로 관리한다.
 * **배경:** 단일 재생성 미로에는 목표와 엔딩이 없어 기술 Phase 완료가 제품 완료로 잘못 표현됐다.
@@ -133,7 +135,7 @@
 
 ## 11. 명시적 선택과 파괴적 행동 정책
 
-* **결정:** 모집은 preview/reroll/confirm, 전투 아이템과 단일 아군 스킬은 item/target/confirm/cancel, New Game과 판매/해고는 확인 단계를 사용한다.
+* **결정:** 모집은 identity/ability allocation/confirm, 전투 아이템과 단일 아군 스킬은 item/target/confirm/cancel, New Game과 판매/해고는 확인 단계를 사용한다.
 * **배경:** 숨은 자동 선택과 단일 키 즉시 삭제는 플레이어 전략과 진행 안전을 동시에 훼손했다.
 * **결과:** 효과가 없는 아이템/주문은 자원이나 턴을 소비하지 않는다. 취소는 상태와 저장 bytes를 바꾸지 않는다.
 
@@ -141,7 +143,7 @@
 
 * **결정:** SFML 2.6.1과 nlohmann/json 3.11.3을 immutable commit으로 고정하고 정적 링크 기반 CMake install/CPack 패키지를 만든다.
 * **배경:** 시스템 SFML 우선 탐색과 개발 build tree RUNPATH는 동일 소스가 다른 산출물을 만들고 재배치를 막았다.
-* **결과:** Linux TGZ와 Windows ZIP을 대상으로 CTest와 package smoke를 CI에 두며 run `33786241695` attempt 2에서 양쪽 artifact와 native SLSA/SPDX attestation을 검증했다. 폰트 provenance와 별개인 법률/지원 주체는 사람 승인 전까지 차단 gate다.
+* **결과:** Linux TGZ와 Windows ZIP을 대상으로 CTest와 package smoke를 CI에 둔다. run `33786241695` attempt 2 증거는 0.9.4에만 결속되며 current v0.10 hosted artifact와 attestation은 별도 `UNVERIFIED` gate다. 법률/지원 주체는 사람 승인 전까지 차단 gate다.
 
 ## 13. 저장 가능한 RNG 위치와 공통 전투/i18n 경계
 
@@ -149,3 +151,32 @@
 * **배경:** seed만 기록하고 Continue에서 소비하지 않으면 실제 재현이 불가능하며, Skill별 자체 피해 계산과 model literal은 전투 및 언어 계약을 다시 분산시킨다.
 * **대안 및 기각 사유:** `std::mt19937` stream 문자열 전체 저장은 구현체/표현 의존성과 큰 fixture를 만들므로 기각했다. 고수준 roll 호출 수만 저장하는 방식은 rejection sampling이 소비한 원시 draw 수를 복원하지 못하므로 기각했다.
 * **결과:** 고정 seed와 raw draw count로 다음 난수를 이어가며, 무기 기반 Skill은 장착 무기 dice/type을 유지한다. UI는 ID를 저장하고 표시 시 현재 locale로 해석한다. 실제 raster와 법률 승인은 자동 key 검사와 분리한다.
+
+## 14. 확정형 캐릭터 생성과 직업 특성
+
+* **결정:** 길드 모집을 신원 입력, 무제한 능력치 리롤, 가중 10포인트 배분, 최종 확인으로 분리한다. 직업 정체성은 기존 스킬 체계를 유지하면서 전사 AC, 도적 우선권, 마법사 주문 피해, 성직자 치유에 작은 레벨 1 고유 보너스를 더한다.
+* **배경:** 기존 모집은 이름과 직업까지 무작위여서 플레이어가 파티 역할을 설계할 수 없었고, 리롤 후보와 지나간 미니맵 바닥이 같은 색으로 표현되어 현재 상태를 빠르게 파악하기 어려웠다.
+* **대안 및 기각 사유:** 직업별 별도 자원과 성장 트리를 추가하는 전면 재설계는 현재 3레벨 데모의 전투·저장 범위를 과도하게 넓혀 기각했다. 나이·성별의 전투 보정도 외형 선택을 최적화 문제로 만들므로 적용하지 않는다.
+* **결과:** 생성 중간 상태는 저장하지 않고 최종 캐릭터만 현재 save schema에 기록한다. v1/v2의 없는 신원 값은 미상으로 보존하며, 현재 위치는 청록색 방향 삼각형으로 바닥과 형태·색 모두 구분한다.
+
+
+## 15. 3층 영속 월드와 목적형 퀘스트
+
+* **결정:** 새 게임에서 세이브에 귀속되는 3층 월드를 생성하고 전체 지형·탐험·목표 상태를 schema v4에 저장한다. 퀘스트는 회수, 고정 보스 처치, NPC 탐색을 현장 달성한 뒤 성에서 보고한다.
+* **배경:** 입장마다 맵이 바뀌는 한 층 구조와 수량 누적 퀘스트는 장소를 기억하고 다시 찾아가는 던전 탐험 경험을 만들지 못했다.
+* **대안 및 기각 사유:** seed와 delta만 저장하면 생성기 변경이 기존 세이브 지형을 바꿀 수 있어 기각했다. 던전 중간 좌표 재개는 전투 state까지 저장 범위를 확대하므로 제외했다. 일반 인벤토리의 퀘스트 아이템은 판매/사용으로 진행을 깨뜨릴 수 있어 별도 중요품으로 분리했다.
+* **결과:** New Game만 월드를 교체한다. 마을/Continue는 1층 입구에서 시작하지만 지형·안개·발견·해결 상태는 유지한다. 목표는 층과 단서를 제공하고 시야로 발견한 뒤에만 모양이 다른 미니맵 표식을 남긴다.
+
+## 16. Turn 3 감사 후 checkpoint와 입력/API 권위
+
+* **결정:** 별도 town baseline을 만들지 않고 마지막 성공 full-session save를 TPK/rollback 권위로 사용한다. save는 exact-byte canonical이며 Party·Quest·World·RNG를 한 transaction으로 다룬다.
+* **배경:** dungeon autosave와 town checkpoint를 같은 파일에 쓰면서 town 복원을 주장하면 실제 복원 기준이 하나로 결정되지 않는다. 디스크 재로드 rollback은 복구 파일 자체가 실패할 때 메모리 원자성도 잃는다.
+* **대안 및 기각 사유:** 별도 town snapshot은 quest key/object 상태와 두 save 간 원자성을 다시 설계해야 하므로 현재 범위에서 기각했다. semantic-only save는 diff·fixture 재현성을 낮춰 exact byte를 선택했다.
+* **결과:** seedless legacy는 deterministic hash seed를 사용한다. 자동 이동의 보스 진입은 전투를 시작하고 다른 상호작용은 `E`를 요구한다. no-op 소모품은 모든 UI에서 비소비, quest는 canonical-only, shop catalog는 구매 8종으로 고정한다.
+
+## 17. Recovery-pending write fence
+
+* **결정:** failed recovery의 in-memory state 보존과 저장 권한을 분리한다. `recoveryPending`은 일반 save를 거부하며 성공 load 또는 확인된 New Game만 해제한다.
+* **배경:** FIN-F025의 비파괴 load와 FIN-F015의 shutdown save를 결합하면 TPK로 죽은 Party가 손상 checkpoint를 대신하는 정상 save로 기록될 수 있었다.
+* **대안 및 기각 사유:** load 실패 때 Party를 즉시 reset하면 진단 상태와 사용자 진행을 잃고 New Game 확인 계약을 우회하므로 기각했다.
+* **결과:** recovery-pending 종료의 Enter는 load 재시도, Esc는 명시적 무저장 종료다. primary absent+corrupt backup도 candidate 단위로 격리한다.

@@ -22,6 +22,9 @@ struct AttackResolution {
 
 class CombatRules {
 public:
+    static int initiativeBonus(const Character& character);
+    static int spellDamageBonus(const Character& character);
+    static int healingBonus(const Character& character);
     static AttackResolution resolveAttack(const Character& attacker, int naturalRoll, int targetAc,
                                           int situationalAttackBonus = 0);
     static int rollAttackDamage(int baseDiceCount, int baseDiceSides, int abilityModifier,

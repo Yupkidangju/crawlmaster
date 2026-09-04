@@ -4,6 +4,7 @@
 #include "model/Party.hpp"
 #include "model/ItemFactory.hpp"
 #include "core/SessionRng.hpp"
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -11,6 +12,33 @@
 #include <stdexcept>
 
 namespace crawl {
+namespace {
+
+std::uint32_t deterministicLegacySeed(const nlohmann::json& json) {
+    const std::string canonical = "crawlmaster-save-migration-v4|" + json.dump();
+    std::uint32_t hash = 2166136261U;
+    for (const unsigned char byte : canonical) {
+        hash ^= byte;
+        hash *= 16777619U;
+    }
+    return hash == 0U ? 0x9E3779B9U : hash;
+}
+
+void requireKeys(const nlohmann::json& object, std::initializer_list<const char*> keys,
+                 const char* area) {
+    for (const char* key : keys) {
+        if (!object.contains(key)) {
+            throw std::runtime_error(std::string(area) + " 필수 필드 누락: " + key);
+        }
+    }
+}
+
+bool isCanonicalQuestId(const std::string& id) {
+    const auto ids = Quest::getCanonicalIds();
+    return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+
+} // namespace
 
 Party::Party() : m_gold(100) {
     resetToDefault();
@@ -32,7 +60,7 @@ bool Party::hasRecoverableSave(const std::string& filePath) {
 }
 
 bool Party::addMember(std::shared_ptr<Character> member) {
-    if (m_members.size() >= 4) {
+    if (!member || m_members.size() >= 4) {
         std::cerr << "[Party] 파티원이 꽉 찼습니다 (최대 4인)." << std::endl;
         return false;
     }
@@ -100,11 +128,32 @@ void Party::removeItem(int index) {
 }
 
 PersistenceResult Party::saveToFile(const std::string& filePath) {
+    if (m_recoveryPending) {
+        return {PersistenceStatus::RecoveryPending, filePath,
+                "복구가 끝나기 전에는 현재 메모리 상태를 저장할 수 없습니다."};
+    }
+    const std::uint32_t previousSeed = m_lastSessionSeed;
+    const std::uint64_t previousDrawCount = m_sessionRngDrawCount;
+    const DungeonWorld previousWorld = m_world;
+    const bool previousActiveSession = m_hasActiveSaveSession;
+    const int previousSchemaVersion = m_loadedSchemaVersion;
+    auto restoreSaveMetadata = [&]() {
+        m_lastSessionSeed = previousSeed;
+        m_sessionRngDrawCount = previousDrawCount;
+        m_world = previousWorld;
+        m_hasActiveSaveSession = previousActiveSession;
+        m_loadedSchemaVersion = previousSchemaVersion;
+    };
     try {
         m_lastSessionSeed = SessionRng::global().seed();
         m_sessionRngDrawCount = SessionRng::global().drawCount();
         nlohmann::json j;
-        j["schemaVersion"] = 2;
+        if (!m_world.isGenerated()) {
+            const auto seed = SessionRng::global().seed();
+            m_world.generate(seed == 0U ? 0x9E3779B9U : seed);
+        }
+        validateState();
+        j["schemaVersion"] = 4;
         j["gold"] = m_gold;
 
         // 인벤토리 아이템 ID 리스트 변환
@@ -115,6 +164,11 @@ PersistenceResult Party::saveToFile(const std::string& filePath) {
             }
         }
         j["inventory"] = invArray;
+
+        std::vector<std::string> sortedKeyItems(m_keyItems.begin(), m_keyItems.end());
+        std::sort(sortedKeyItems.begin(), sortedKeyItems.end());
+        nlohmann::json keyItems = sortedKeyItems;
+        j["keyItems"] = keyItems;
 
         // 파티원 캐릭터 정보 직렬화
         nlohmann::json membersArray = nlohmann::json::array();
@@ -134,25 +188,32 @@ PersistenceResult Party::saveToFile(const std::string& filePath) {
         }
         j["activeQuests"] = questsArray;
 
-        nlohmann::json completedQuestIds = nlohmann::json::array();
-        for (const auto& questId : m_completedQuestIds) {
-            completedQuestIds.push_back(questId);
-        }
+        std::vector<std::string> sortedCompletedQuestIds(
+            m_completedQuestIds.begin(), m_completedQuestIds.end());
+        std::sort(sortedCompletedQuestIds.begin(), sortedCompletedQuestIds.end());
+        nlohmann::json completedQuestIds = sortedCompletedQuestIds;
         j["completedQuestIds"] = completedQuestIds;
         j["campaignCompleted"] = m_campaignCompleted;
         j["lastSessionSeed"] = m_lastSessionSeed;
         j["sessionRngDrawCount"] = m_sessionRngDrawCount;
+        j["world"] = m_world.toJson();
 
         auto result = Persistence::atomicWriteText(filePath, j.dump(4));
+        if (result.succeeded()) {
+            m_hasActiveSaveSession = true;
+            m_loadedSchemaVersion = 4;
+        }
         if (result.status == PersistenceStatus::CommittedDurabilityUnknown) {
             std::cerr << "[Save Warning] " << result.message << std::endl;
         } else if (result) {
             std::cout << "[Save] 파티 데이터를 세이브 파일(" << filePath << ")에 영속화했습니다." << std::endl;
         } else {
             std::cerr << "[Save Error] " << result.message << std::endl;
+            restoreSaveMetadata();
         }
         return result;
     } catch (const std::exception& e) {
+        restoreSaveMetadata();
         std::cerr << "[Save Error] 세이브 중 예외가 발생했습니다: " << e.what() << std::endl;
         return {PersistenceStatus::IoError, filePath, e.what()};
     }
@@ -162,6 +223,10 @@ PersistenceResult Party::loadFromFile(const std::string& filePath) {
     auto loadCandidate = [this](const std::filesystem::path& candidate,
                                 PersistenceStatus successStatus) -> PersistenceResult {
         std::error_code error;
+        if (std::filesystem::is_symlink(std::filesystem::symlink_status(candidate, error))) {
+            return {PersistenceStatus::IoError, candidate, "심볼릭 링크 세이브는 읽지 않습니다."};
+        }
+        error.clear();
         if (!std::filesystem::exists(candidate, error)) {
             return {PersistenceStatus::NotFound, candidate, "세이브 파일이 없습니다."};
         }
@@ -181,11 +246,21 @@ PersistenceResult Party::loadFromFile(const std::string& filePath) {
             nlohmann::json j;
             file >> j;
             if (!j.is_object()) throw std::runtime_error("세이브 루트는 객체여야 합니다.");
+            if (!j.contains("schemaVersion") &&
+                (j.contains("world") || j.contains("keyItems") || j.contains("completedQuestIds") ||
+                 j.contains("sessionRngDrawCount"))) {
+                throw std::runtime_error("canonical save의 schemaVersion이 누락됐습니다.");
+            }
 
             const int schemaVersion = j.value("schemaVersion", 1);
-            if (schemaVersion < 1 || schemaVersion > 2) {
+            if (schemaVersion < 1 || schemaVersion > 4) {
                 return {PersistenceStatus::UnsupportedVersion, candidate,
                         "지원하지 않는 세이브 스키마입니다: " + std::to_string(schemaVersion)};
+            }
+            if (schemaVersion == 4) {
+                requireKeys(j, {"schemaVersion", "gold", "inventory", "keyItems", "members",
+                                "activeQuests", "completedQuestIds", "campaignCompleted",
+                                "lastSessionSeed", "sessionRngDrawCount", "world"}, "v4 save");
             }
 
             const int gold = j.at("gold").get<int>();
@@ -205,6 +280,20 @@ PersistenceResult Party::loadFromFile(const std::string& filePath) {
                 inventory.push_back(std::move(item));
             }
 
+            std::unordered_set<std::string> keyItems;
+            if (schemaVersion >= 4) {
+                const auto& keyItemsJson = j.at("keyItems");
+                if (!keyItemsJson.is_array() || keyItemsJson.size() > 32) {
+                    throw std::runtime_error("keyItems 형식 또는 크기가 잘못됐습니다.");
+                }
+                for (const auto& keyItemJson : keyItemsJson) {
+                    const std::string itemId = keyItemJson.get<std::string>();
+                    if (itemId != "key_moon_seal" || !keyItems.insert(itemId).second) {
+                        throw std::runtime_error("알 수 없거나 중복된 중요품입니다.");
+                    }
+                }
+            }
+
             std::vector<std::shared_ptr<Character>> members;
             const auto& membersJson = j.at("members");
             if (!membersJson.is_array() || membersJson.size() > 4) {
@@ -218,7 +307,7 @@ PersistenceResult Party::loadFromFile(const std::string& filePath) {
 
             const char* activeQuestKey = schemaVersion == 1 ? "active_quests" : "activeQuests";
             std::vector<std::shared_ptr<Quest>> activeQuests;
-            if (j.contains(activeQuestKey)) {
+            if (schemaVersion >= 4 || j.contains(activeQuestKey)) {
                 const auto& questsJson = j.at(activeQuestKey);
                 if (!questsJson.is_array() || questsJson.size() > 100) {
                     throw std::runtime_error("active quest 형식 또는 크기가 잘못됐습니다.");
@@ -231,17 +320,16 @@ PersistenceResult Party::loadFromFile(const std::string& filePath) {
             }
 
             std::unordered_set<std::string> completedQuestIds;
-            if (schemaVersion == 2 && j.contains("completedQuestIds")) {
+            if (schemaVersion >= 4 || (schemaVersion >= 2 && j.contains("completedQuestIds"))) {
                 const auto& completedJson = j.at("completedQuestIds");
                 if (!completedJson.is_array() || completedJson.size() > 100) {
                     throw std::runtime_error("completedQuestIds 형식 또는 크기가 잘못됐습니다.");
                 }
                 for (const auto& questId : completedJson) {
                     const std::string id = questId.get<std::string>();
-                    if (id.empty() || id.size() > 128) {
-                        throw std::runtime_error("completed quest id 길이가 잘못됐습니다.");
+                    if (!isCanonicalQuestId(id) || !completedQuestIds.insert(id).second) {
+                        throw std::runtime_error("completed quest id가 unknown 또는 duplicate입니다.");
                     }
-                    completedQuestIds.insert(id);
                 }
             }
 
@@ -255,13 +343,71 @@ PersistenceResult Party::loadFromFile(const std::string& filePath) {
                 }
             }
 
-            const bool campaignCompleted = schemaVersion == 2 ? j.value("campaignCompleted", false) : false;
-            const std::uint32_t lastSessionSeed = schemaVersion == 2
-                ? j.value("lastSessionSeed", std::uint32_t{0}) : 0;
-            const std::uint64_t sessionRngDrawCount = schemaVersion == 2
-                ? j.value("sessionRngDrawCount", std::uint64_t{0}) : 0;
+            const bool campaignCompleted = schemaVersion >= 4 ? j.at("campaignCompleted").get<bool>() :
+                (schemaVersion >= 2 ? j.value("campaignCompleted", false) : false);
+            std::uint32_t lastSessionSeed = schemaVersion >= 4
+                ? j.at("lastSessionSeed").get<std::uint32_t>()
+                : (schemaVersion >= 2 ? j.value("lastSessionSeed", std::uint32_t{0}) : 0);
+            const std::uint64_t sessionRngDrawCount = schemaVersion >= 2
+                ? (schemaVersion >= 4 ? j.at("sessionRngDrawCount").get<std::uint64_t>()
+                                      : j.value("sessionRngDrawCount", std::uint64_t{0})) : 0;
             if (sessionRngDrawCount > 10'000'000U) {
                 throw std::runtime_error("sessionRngDrawCount 범위를 벗어났습니다.");
+            }
+
+            if (lastSessionSeed == 0U) {
+                if (schemaVersion >= 4) throw std::runtime_error("v4 session seed는 0일 수 없습니다.");
+                lastSessionSeed = deterministicLegacySeed(j);
+            }
+            DungeonWorld world;
+            if (schemaVersion >= 4) {
+                world = DungeonWorld::fromJson(j.at("world"));
+                if (world.getSeed() != lastSessionSeed) {
+                    throw std::runtime_error("world seed와 session RNG seed가 일치하지 않습니다.");
+                }
+            } else {
+                world.generate(lastSessionSeed);
+            }
+
+            for (const auto& object : world.getObjects()) {
+                const auto active = std::find_if(activeQuests.begin(), activeQuests.end(),
+                    [&](const auto& quest) { return quest && quest->getId() == object.questId; });
+                const bool isActive = active != activeQuests.end();
+                const bool isCompleted = completedQuestIds.contains(object.questId);
+                if (object.state == WorldObjectState::RESOLVED && !isActive && !isCompleted) {
+                    throw std::runtime_error("해결된 월드 목표에 대응하는 퀘스트 진행이 없습니다.");
+                }
+                if (isActive) {
+                    const bool ready = (*active)->isReadyToReport();
+                    if (ready != (object.state == WorldObjectState::RESOLVED)) {
+                        throw std::runtime_error("월드 목표와 퀘스트 보고 상태가 일치하지 않습니다.");
+                    }
+                    if ((*active)->getType() == QuestType::RETRIEVE_KEY_ITEM && ready &&
+                        !keyItems.contains((*active)->getTargetId())) {
+                        throw std::runtime_error("회수 완료 퀘스트의 중요품이 없습니다.");
+                    }
+                    if ((*active)->getType() == QuestType::RETRIEVE_KEY_ITEM && !ready &&
+                        keyItems.contains((*active)->getTargetId())) {
+                        throw std::runtime_error("미완료 회수 퀘스트가 중요품을 이미 보유합니다.");
+                    }
+                }
+                if (isCompleted && object.state != WorldObjectState::RESOLVED) {
+                    throw std::runtime_error("완료 퀘스트의 월드 목표가 해결되지 않았습니다.");
+                }
+            }
+            for (const auto& keyItem : keyItems) {
+                const auto quest = std::find_if(activeQuests.begin(), activeQuests.end(),
+                    [&](const auto& candidate) {
+                        return candidate && candidate->getType() == QuestType::RETRIEVE_KEY_ITEM &&
+                               candidate->getTargetId() == keyItem && candidate->isReadyToReport();
+                    });
+                if (quest == activeQuests.end() || completedQuestIds.contains((*quest)->getId())) {
+                    throw std::runtime_error("중요품에 대응하는 보고 대기 퀘스트가 없습니다.");
+                }
+            }
+            if (completedQuestIds.contains("qst_recover_moon_seal") &&
+                keyItems.contains("key_moon_seal")) {
+                throw std::runtime_error("완료된 회수 퀘스트의 중요품이 남아 있습니다.");
             }
 
             m_gold = gold;
@@ -269,9 +415,15 @@ PersistenceResult Party::loadFromFile(const std::string& filePath) {
             m_members = std::move(members);
             m_activeQuests = std::move(activeQuests);
             m_completedQuestIds = std::move(completedQuestIds);
+            m_keyItems = std::move(keyItems);
+            m_world = std::move(world);
             m_campaignCompleted = campaignCompleted;
             m_lastSessionSeed = lastSessionSeed;
             m_sessionRngDrawCount = sessionRngDrawCount;
+            m_hasActiveSaveSession = true;
+            m_recoveryPending = false;
+            m_loadedSchemaVersion = schemaVersion;
+            SessionRng::global() = SessionRng(lastSessionSeed, sessionRngDrawCount);
 
             std::cout << "[Load] 세이브 파일(" << candidate.string() << ")로부터 파티 데이터를 로드했습니다." << std::endl;
             return {successStatus, candidate, {}};
@@ -297,8 +449,24 @@ PersistenceResult Party::loadFromFile(const std::string& filePath) {
         return backupResult;
     };
 
+    auto quarantineCorruptCandidate = [](const std::filesystem::path& candidate,
+                                         const PersistenceResult& corruptResult) {
+        std::filesystem::path quarantinePath;
+        const auto quarantineResult = Persistence::quarantine(candidate, quarantinePath);
+        if (quarantineResult.status == PersistenceStatus::IoError) return quarantineResult;
+        std::string message = corruptResult.message;
+        if (quarantineResult.status == PersistenceStatus::CommittedDurabilityUnknown) {
+            message += " 손상 파일은 격리됐지만 디렉터리 동기화를 확인하지 못했습니다.";
+        }
+        return PersistenceResult{PersistenceStatus::Corrupt, quarantinePath, std::move(message)};
+    };
+
     if (primaryResult.status == PersistenceStatus::NotFound && std::filesystem::exists(backup)) {
-        return recoverBackup();
+        auto result = recoverBackup();
+        if (result.status == PersistenceStatus::Corrupt) {
+            return quarantineCorruptCandidate(backup, result);
+        }
+        return result;
     }
     if (primaryResult.status != PersistenceStatus::Corrupt) {
         return primaryResult;
@@ -317,6 +485,13 @@ PersistenceResult Party::loadFromFile(const std::string& filePath) {
         return backupResult;
     }
 
+    if (backupResult.status == PersistenceStatus::Corrupt) {
+        const auto backupQuarantineResult = quarantineCorruptCandidate(backup, backupResult);
+        if (backupQuarantineResult.status == PersistenceStatus::IoError) {
+            return backupQuarantineResult;
+        }
+    }
+
     std::cerr << "[Load Warning] 손상 세이브를 격리했습니다: " << corruptionReason << std::endl;
     return {PersistenceStatus::Corrupt, quarantinePath, corruptionReason};
 }
@@ -326,9 +501,13 @@ void Party::resetToDefault() {
     m_inventory.clear();
     m_activeQuests.clear();
     m_completedQuestIds.clear();
+    m_keyItems.clear();
+    m_world = DungeonWorld{};
     m_campaignCompleted = false;
     m_lastSessionSeed = 0;
     m_sessionRngDrawCount = 0;
+    m_hasActiveSaveSession = false;
+    m_loadedSchemaVersion = 4;
     // 기본 치유물약 2개와 마나 물약 1개 지급 (spec.md 정책)
     m_inventory.push_back(ItemFactory::createItem("pot_heal"));
     m_inventory.push_back(ItemFactory::createItem("pot_heal"));
@@ -337,9 +516,14 @@ void Party::resetToDefault() {
 }
 
 PersistenceResult Party::startNewGame(const std::string& filePath) {
+    const PartyCheckpoint checkpoint = captureCheckpoint();
     resetToDefault();
+    m_recoveryPending = false;
     m_lastSessionSeed = SessionRng::global().seed();
-    return saveToFile(filePath);
+    m_world.generate(m_lastSessionSeed == 0U ? 0x9E3779B9U : m_lastSessionSeed);
+    const auto result = saveToFile(filePath);
+    if (!result.succeeded()) restoreCheckpoint(checkpoint);
+    return result;
 }
 
 const std::vector<std::shared_ptr<Quest>>& Party::getActiveQuests() const {
@@ -347,9 +531,9 @@ const std::vector<std::shared_ptr<Quest>>& Party::getActiveQuests() const {
 }
 
 void Party::acceptQuest(std::shared_ptr<Quest> quest) {
-    if (quest && !hasQuest(quest->getId()) && !isQuestCompleted(quest->getId())) {
-        m_activeQuests.push_back(quest);
-    }
+    if (!quest || hasQuest(quest->getId()) || isQuestCompleted(quest->getId())) return;
+    if (!quest->matchesCanonicalDefinition()) return;
+    m_activeQuests.push_back(std::move(quest));
 }
 
 void Party::completeQuest(const std::string& questId) {
@@ -360,6 +544,14 @@ void Party::completeQuest(const std::string& questId) {
     if (it != m_activeQuests.end()) {
         auto quest = *it;
         if (quest->checkCompletion()) {
+            if (quest->getTargetFloor() > 0) {
+                const auto object = std::find_if(m_world.getObjects().begin(), m_world.getObjects().end(),
+                    [&](const auto& candidate) { return candidate.questId == questId; });
+                if (object == m_world.getObjects().end() || object->state != WorldObjectState::RESOLVED) return;
+            }
+            if (quest->getType() == QuestType::RETRIEVE_KEY_ITEM && !hasKeyItem(quest->getTargetId())) {
+                return;
+            }
             // 보상 지급
             addGold(quest->getGoldReward());
             
@@ -396,12 +588,16 @@ void Party::completeQuest(const std::string& questId) {
                     }
                 }
             }
+            if (quest->getType() == QuestType::RETRIEVE_KEY_ITEM) {
+                removeKeyItem(quest->getTargetId());
+            }
 
             // 활성 퀘스트 리스트에서 완료 퀘스트 제거
             for (const auto& rewardItemId : quest->getRewardItemIds()) {
                 auto rewardItem = ItemFactory::createItem(rewardItemId);
                 if (rewardItem) m_inventory.push_back(std::move(rewardItem));
             }
+            quest->setCompleted(true);
             m_completedQuestIds.insert(questId);
             m_activeQuests.erase(it);
             std::cout << "[Quest] 퀘스트 " << questId << "를 완료하고 보상을 정산했습니다." << std::endl;
@@ -414,6 +610,8 @@ void Party::abandonQuest(const std::string& questId) {
         [&](const auto& q) { return q->getId() == questId; });
 
     if (it != m_activeQuests.end()) {
+        // 현장에서 해결된 목적형 퀘스트를 버리면 영속 월드와 중요품 상태가 고아가 된다.
+        if ((*it)->getTargetFloor() > 0 && (*it)->isReadyToReport()) return;
         m_activeQuests.erase(it);
     }
 }
@@ -447,6 +645,34 @@ void Party::updateQuestCollectProgress() {
     }
 }
 
+bool Party::markQuestObjectiveComplete(const std::string& questId) {
+    auto quest = getQuest(questId);
+    return quest && quest->markObjectiveComplete();
+}
+
+std::shared_ptr<Quest> Party::getQuest(const std::string& questId) const {
+    const auto it = std::find_if(m_activeQuests.begin(), m_activeQuests.end(),
+        [&](const auto& quest) { return quest && quest->getId() == questId; });
+    return it == m_activeQuests.end() ? nullptr : *it;
+}
+
+bool Party::addKeyItem(const std::string& itemId) {
+    if (itemId != "key_moon_seal") return false;
+    return m_keyItems.insert(itemId).second;
+}
+
+bool Party::removeKeyItem(const std::string& itemId) {
+    return m_keyItems.erase(itemId) > 0;
+}
+
+bool Party::hasKeyItem(const std::string& itemId) const {
+    return m_keyItems.contains(itemId);
+}
+
+const std::unordered_set<std::string>& Party::getKeyItems() const { return m_keyItems; }
+DungeonWorld& Party::getWorld() { return m_world; }
+const DungeonWorld& Party::getWorld() const { return m_world; }
+
 bool Party::isQuestCompleted(const std::string& questId) const {
     return m_completedQuestIds.contains(questId);
 }
@@ -473,6 +699,109 @@ void Party::setLastSessionSeed(std::uint32_t seed) {
 
 std::uint64_t Party::getSessionRngDrawCount() const {
     return m_sessionRngDrawCount;
+}
+
+bool Party::hasActiveSaveSession() const { return m_hasActiveSaveSession; }
+bool Party::isRecoveryPending() const { return m_recoveryPending; }
+void Party::markRecoveryPending() { m_recoveryPending = true; }
+bool Party::needsSaveMigration() const { return m_hasActiveSaveSession && m_loadedSchemaVersion < 4; }
+
+PartyCheckpoint Party::captureCheckpoint() const {
+    PartyCheckpoint checkpoint;
+    checkpoint.gold = m_gold;
+    for (const auto& item : m_inventory) {
+        if (item) checkpoint.inventoryIds.push_back(item->getId());
+    }
+    for (const auto& member : m_members) {
+        if (member) checkpoint.members.push_back(std::make_shared<Character>(*member));
+    }
+    for (const auto& quest : m_activeQuests) {
+        if (quest) checkpoint.quests.push_back(std::make_shared<Quest>(*quest));
+    }
+    checkpoint.completedQuestIds = m_completedQuestIds;
+    checkpoint.keyItems = m_keyItems;
+    checkpoint.world = m_world;
+    checkpoint.campaignCompleted = m_campaignCompleted;
+    checkpoint.lastSessionSeed = m_lastSessionSeed;
+    checkpoint.sessionRngDrawCount = m_sessionRngDrawCount;
+    checkpoint.activeSaveSession = m_hasActiveSaveSession;
+    checkpoint.recoveryPending = m_recoveryPending;
+    checkpoint.loadedSchemaVersion = m_loadedSchemaVersion;
+    checkpoint.globalRngSeed = SessionRng::global().seed();
+    checkpoint.globalRngDrawCount = SessionRng::global().drawCount();
+    return checkpoint;
+}
+
+void Party::restoreCheckpoint(const PartyCheckpoint& checkpoint) {
+    std::vector<std::shared_ptr<Item>> inventory;
+    for (const auto& itemId : checkpoint.inventoryIds) {
+        auto item = ItemFactory::createItem(itemId);
+        if (!item) throw std::runtime_error("checkpoint item 복원에 실패했습니다.");
+        inventory.push_back(std::move(item));
+    }
+    std::vector<std::shared_ptr<Character>> members;
+    for (const auto& member : checkpoint.members) members.push_back(std::make_shared<Character>(*member));
+    std::vector<std::shared_ptr<Quest>> quests;
+    for (const auto& quest : checkpoint.quests) quests.push_back(std::make_shared<Quest>(*quest));
+
+    m_gold = checkpoint.gold;
+    m_inventory = std::move(inventory);
+    m_members = std::move(members);
+    m_activeQuests = std::move(quests);
+    m_completedQuestIds = checkpoint.completedQuestIds;
+    m_keyItems = checkpoint.keyItems;
+    m_world = checkpoint.world;
+    m_campaignCompleted = checkpoint.campaignCompleted;
+    m_lastSessionSeed = checkpoint.lastSessionSeed;
+    m_sessionRngDrawCount = checkpoint.sessionRngDrawCount;
+    m_hasActiveSaveSession = checkpoint.activeSaveSession;
+    m_recoveryPending = checkpoint.recoveryPending;
+    m_loadedSchemaVersion = checkpoint.loadedSchemaVersion;
+    SessionRng::global() = SessionRng(checkpoint.globalRngSeed, checkpoint.globalRngDrawCount);
+}
+
+void Party::validateState() const {
+    if (m_members.size() > 4 ||
+        std::any_of(m_members.begin(), m_members.end(), [](const auto& member) { return !member; }) ||
+        std::any_of(m_inventory.begin(), m_inventory.end(), [](const auto& item) { return !item; })) {
+        throw std::runtime_error("Party member/inventory invariant가 잘못됐습니다.");
+    }
+    m_world.validate();
+    if (m_world.getSeed() != m_lastSessionSeed) {
+        throw std::runtime_error("world seed와 session RNG seed가 일치하지 않습니다.");
+    }
+    std::unordered_set<std::string> activeIds;
+    for (const auto& quest : m_activeQuests) {
+        if (!quest || !quest->matchesCanonicalDefinition() ||
+            !activeIds.insert(quest->getId()).second ||
+            m_completedQuestIds.contains(quest->getId())) {
+            throw std::runtime_error("active quest invariant가 잘못됐습니다.");
+        }
+    }
+    for (const auto& id : m_completedQuestIds) {
+        if (!isCanonicalQuestId(id)) throw std::runtime_error("completed quest id가 canonical이 아닙니다.");
+    }
+    for (const auto& object : m_world.getObjects()) {
+        const auto active = getQuest(object.questId);
+        const bool completed = m_completedQuestIds.contains(object.questId);
+        if (object.state == WorldObjectState::RESOLVED) {
+            if ((!active || !active->isReadyToReport()) && !completed) {
+                throw std::runtime_error("resolved object에 대응하는 quest 상태가 없습니다.");
+            }
+        } else if ((active && active->isReadyToReport()) || completed) {
+            throw std::runtime_error("quest 완료 상태와 world object가 일치하지 않습니다.");
+        }
+    }
+    const auto retrieve = getQuest("qst_recover_moon_seal");
+    const bool hasMoonSeal = m_keyItems.contains("key_moon_seal");
+    if (hasMoonSeal != (retrieve && retrieve->isReadyToReport()) ||
+        (m_completedQuestIds.contains("qst_recover_moon_seal") && hasMoonSeal)) {
+        throw std::runtime_error("중요품과 회수 quest 상태가 일치하지 않습니다.");
+    }
+    if (m_keyItems.size() > 1 ||
+        std::any_of(m_keyItems.begin(), m_keyItems.end(), [](const auto& id) { return id != "key_moon_seal"; })) {
+        throw std::runtime_error("알 수 없는 중요품이 있습니다.");
+    }
 }
 
 } // namespace crawl

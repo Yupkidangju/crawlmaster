@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "turn": 3,
+  "project_root": "/mnt/Projects_SSD/cpp/crawlmaster",
+  "directory": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/3",
+  "source_reports": [
+    "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/3/sub_audit_01_character_lifecycle.md",
+    "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/3/sub_audit_02_quest_system.md",
+    "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/3/sub_audit_03_world_persistence.md",
+    "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/3/sub_audit_04_contract_docs.md",
+    "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/3/sub_audit_05_resilience_runtime.md"
+  ],
+  "final_report": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/3/final_audit_report_3.md",
+  "created_at_utc": "2026-09-04T07:06:59.616531+00:00"
+}

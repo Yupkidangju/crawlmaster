@@ -8,6 +8,18 @@
 
 namespace crawl {
 
+int CombatRules::initiativeBonus(const Character& character) {
+    return character.getClass() == CharacterClass::ROGUE ? 2 : 0;
+}
+
+int CombatRules::spellDamageBonus(const Character& character) {
+    return character.getClass() == CharacterClass::MAGE ? 2 : 0;
+}
+
+int CombatRules::healingBonus(const Character& character) {
+    return character.getClass() == CharacterClass::CLERIC ? 2 : 0;
+}
+
 AttackResolution CombatRules::resolveAttack(const Character& attacker, int naturalRoll, int targetAc,
                                             int situationalAttackBonus) {
     const auto abilities = attacker.getAbilities();

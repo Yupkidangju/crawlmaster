@@ -65,35 +65,93 @@ std::shared_ptr<crawl::Character> character(const std::string& name,
 
 void testRecruitmentDraftMutatesPartyOnlyOnConfirm() {
     constexpr std::uint32_t seed = 0xA63E7U;
-    const std::vector<std::string> names = {"Aster", "Bryn", "Cyra"};
     crawl::SessionRng random(seed);
     crawl::SessionRng mirrorRandom(seed);
-    crawl::RecruitmentDraft draft(random, names);
-    crawl::RecruitmentDraft mirrorDraft(mirrorRandom, names);
+    crawl::RecruitmentDraft draft(random);
+    crawl::RecruitmentDraft mirrorDraft(mirrorRandom);
     crawl::Party party;
 
     CHECK(party.getMemberCount() == 0);
-    CHECK(draft.preview().getName() == "Aster");
-    CHECK(draft.preview().getName() == mirrorDraft.preview().getName());
-    CHECK(draft.preview().getClass() == mirrorDraft.preview().getClass());
+    CHECK(draft.setName("Aster"));
+    CHECK(draft.setAge(27));
+    CHECK(draft.setGender(crawl::Gender::NON_BINARY));
+    CHECK(draft.setClass(crawl::CharacterClass::ROGUE));
+    CHECK(draft.abilities().dexterity == mirrorDraft.abilities().dexterity);
     CHECK(party.getMemberCount() == 0);
 
     draft.reroll();
     mirrorDraft.reroll();
-    CHECK(draft.preview().getName() == "Bryn");
-    CHECK(draft.preview().getName() == mirrorDraft.preview().getName());
-    CHECK(draft.preview().getClass() == mirrorDraft.preview().getClass());
+    CHECK(draft.abilities().strength == mirrorDraft.abilities().strength);
+    CHECK(draft.abilities().charisma == mirrorDraft.abilities().charisma);
+    CHECK(draft.remainingPoints() == 10);
     CHECK(party.getMemberCount() == 0);
 
-    const std::string confirmedName = draft.preview().getName();
-    const crawl::CharacterClass confirmedClass = draft.preview().getClass();
+    while (draft.remainingPoints() > 0) {
+        bool spent = false;
+        for (const auto ability : {crawl::Ability::STRENGTH, crawl::Ability::DEXTERITY,
+                                   crawl::Ability::CONSTITUTION, crawl::Ability::INTELLIGENCE,
+                                   crawl::Ability::WISDOM, crawl::Ability::CHARISMA}) {
+            const int cost = draft.increaseCost(ability);
+            if (cost > 0 && cost <= draft.remainingPoints()) {
+                CHECK(draft.increase(ability));
+                spent = true;
+                break;
+            }
+        }
+        if (!spent) {
+            draft.reroll();
+        }
+    }
+    CHECK(draft.isReady());
     CHECK(draft.confirm(party));
     CHECK(party.getMemberCount() == 1);
-    CHECK(party.getMember(0)->getName() == confirmedName);
-    CHECK(party.getMember(0)->getClass() == confirmedClass);
+    CHECK(party.getMember(0)->getName() == "Aster");
+    CHECK(party.getMember(0)->getAge() == 27);
+    CHECK(party.getMember(0)->getGender() == crawl::Gender::NON_BINARY);
+    CHECK(party.getMember(0)->getClass() == crawl::CharacterClass::ROGUE);
 
     CHECK(!draft.confirm(party));
     CHECK(party.getMemberCount() == 1);
+}
+
+void testRecruitmentDraftValidatesIdentityAndWeightedPointBuy() {
+    crawl::SessionRng random(9001U);
+    crawl::RecruitmentDraft draft(random);
+
+    CHECK(!draft.setName(""));
+    CHECK(draft.setName(" leading"));
+    CHECK(draft.identity().name == "leading");
+    CHECK(draft.setName("trailing "));
+    CHECK(draft.identity().name == "trailing");
+    CHECK(!draft.setName(std::string(17, 'a')));
+    CHECK(draft.setName("리아"));
+    CHECK(!draft.setAge(17));
+    CHECK(!draft.setAge(81));
+    CHECK(draft.setAge(18));
+    CHECK(!draft.setGender(crawl::Gender::UNSPECIFIED));
+    CHECK(!draft.setGender(static_cast<crawl::Gender>(99)));
+    CHECK(draft.setGender(crawl::Gender::FEMALE));
+    const auto invalidAbility = static_cast<crawl::Ability>(99);
+    CHECK(draft.increaseCost(invalidAbility) == 0);
+    CHECK(!draft.increase(invalidAbility));
+    CHECK(!draft.decrease(invalidAbility));
+
+    const auto base = draft.baseAbilities();
+    const auto ability = crawl::Ability::STRENGTH;
+    int expectedCost = base.strength < 12 ? 1 : (base.strength < 15 ? 2 : 3);
+    if (base.strength < 18) {
+        CHECK(draft.increaseCost(ability) == expectedCost);
+        CHECK(draft.increase(ability));
+        CHECK(draft.remainingPoints() == 10 - expectedCost);
+        CHECK(draft.decrease(ability));
+        CHECK(draft.remainingPoints() == 10);
+    }
+    CHECK(!draft.decrease(ability));
+
+    crawl::Party party;
+    CHECK(!draft.isReady());
+    CHECK(!draft.confirm(party));
+    CHECK(party.getMemberCount() == 0);
 }
 
 void testConsumableRulesRejectNoEffectAndAcceptUsefulTargets() {
@@ -169,13 +227,95 @@ void testCureWoundsRejectsFullOrInvalidTargetsWithoutResourceCost() {
     CHECK(hurtAlly->getHp() == hurtHpBefore);
 }
 
+nlohmann::json canonicalCharacterJson(const std::string& name, crawl::CharacterClass characterClass,
+                                      int level, int spellSlots, int maxSpellSlots) {
+    return {
+        {"name", name}, {"age", 24}, {"gender", "non_binary"},
+        {"class", static_cast<int>(characterClass)}, {"level", level}, {"xp", 0},
+        {"hp", 10}, {"maxHp", 10}, {"spellSlots", spellSlots},
+        {"maxSpellSlots", maxSpellSlots}, {"poisonTurns", 0}, {"paralysisTurns", 0},
+        {"abilities", {{"strength", 10}, {"dexterity", 10}, {"constitution", 10},
+                       {"intelligence", 10}, {"wisdom", 10}, {"charisma", 10}}},
+        {"equipment", {{"weapon", ""}, {"armor", ""}, {"shield", ""}}},
+    };
+}
+
+void testSharedIdentityRulesRejectMalformedAndNonCanonicalNames() {
+    crawl::SessionRng random(123U);
+    crawl::RecruitmentDraft draft(random);
+    CHECK(draft.setName("\xE3\x80\x80" "Aster" "\xE3\x80\x80"));
+    CHECK(draft.identity().name == "Aster");
+    CHECK(!crawl::RecruitmentDraft::isValidName(std::string(17, 'a')));
+    CHECK(!crawl::RecruitmentDraft::isValidName(std::string("\xC3\x28", 2)));
+    CHECK(!crawl::RecruitmentDraft::isValidName(std::string("A\xC2\x85", 3)));
+    CHECK(!crawl::RecruitmentDraft::isValidName(std::string("A\xC2\xAD", 3)));
+    CHECK(!crawl::RecruitmentDraft::isValidName(std::string("A\xD8\x9C", 3)));
+    CHECK(!crawl::RecruitmentDraft::isValidName(std::string("A\xE2\x80\x8B", 4)));
+
+    const std::vector<std::string> invalidPersistedNames = {
+        " Aster", std::string(17, 'a'), std::string("\xC3\x28", 2),
+        std::string("A\xC2\x85", 3), std::string("A\xE2\x80\x8B", 4)};
+    for (const auto& name : invalidPersistedNames) {
+        bool rejected = false;
+        try {
+            static_cast<void>(crawl::Character::fromJson(
+                canonicalCharacterJson(name, crawl::CharacterClass::WARRIOR, 1, 0, 0), 4));
+        } catch (const std::exception&) {
+            rejected = true;
+        }
+        CHECK(rejected);
+    }
+}
+
+void testSpellSlotsMatchClassAndLevel() {
+    const std::vector<crawl::CharacterClass> classes = {
+        crawl::CharacterClass::WARRIOR, crawl::CharacterClass::MAGE,
+        crawl::CharacterClass::ROGUE, crawl::CharacterClass::CLERIC};
+    for (const auto characterClass : classes) {
+        for (int level = 1; level <= 3; ++level) {
+            const bool caster = characterClass == crawl::CharacterClass::MAGE ||
+                                characterClass == crawl::CharacterClass::CLERIC;
+            const int expected = caster ? level + 1 : 0;
+            CHECK(crawl::Character::fromJson(
+                canonicalCharacterJson("Valid", characterClass, level, expected, expected), 4) != nullptr);
+            bool rejected = false;
+            try {
+                static_cast<void>(crawl::Character::fromJson(
+                    canonicalCharacterJson("Invalid", characterClass, level, 0, expected + 1), 4));
+            } catch (const std::exception&) {
+                rejected = true;
+            }
+            CHECK(rejected);
+        }
+    }
+}
+
+void testV4CharacterFieldsAreRequired() {
+    const auto base = canonicalCharacterJson("Required", crawl::CharacterClass::CLERIC, 1, 2, 2);
+    const std::vector<std::string> required = {
+        "name", "age", "gender", "class", "level", "xp", "hp", "maxHp",
+        "spellSlots", "maxSpellSlots", "poisonTurns", "paralysisTurns", "abilities", "equipment"};
+    for (const auto& key : required) {
+        auto malformed = base;
+        malformed.erase(key);
+        bool rejected = false;
+        try { static_cast<void>(crawl::Character::fromJson(malformed, 4)); }
+        catch (const std::exception&) { rejected = true; }
+        CHECK(rejected);
+    }
+}
+
 } // namespace
 
 int main() {
     testRecruitmentDraftMutatesPartyOnlyOnConfirm();
+    testRecruitmentDraftValidatesIdentityAndWeightedPointBuy();
     testConsumableRulesRejectNoEffectAndAcceptUsefulTargets();
     testCureWoundsUsesOnlyTheExplicitAllyTarget();
     testCureWoundsRejectsFullOrInvalidTargetsWithoutResourceCost();
+    testSharedIdentityRulesRejectMalformedAndNonCanonicalNames();
+    testSpellSlotsMatchClassAndLevel();
+    testV4CharacterFieldsAreRequired();
 
     if (g_failureCount != 0) {
         std::cerr << "Agency contract tests failed: " << g_failureCount << " check(s).\n";

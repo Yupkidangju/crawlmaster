@@ -14,7 +14,8 @@ enum class PersistenceStatus {
     CommittedDurabilityUnknown,
     Corrupt,
     UnsupportedVersion,
-    IoError
+    IoError,
+    RecoveryPending
 };
 
 struct PersistenceResult {

@@ -40,6 +40,7 @@ void TitleState::handleInput(const sf::Event& event) {
                 break;
             case sf::Keyboard::Enter:
                 if (m_confirmingNewGame) {
+                    const PartyCheckpoint checkpoint = m_game.getParty().captureCheckpoint();
                     SessionRng::startNewGlobalSession();
                     auto saveResult = m_game.getParty().startNewGame();
                     if (!saveResult.durabilityConfirmed()) {
@@ -47,24 +48,15 @@ void TitleState::handleInput(const sf::Event& event) {
                     } else if (saveResult) {
                         m_game.getStates().replaceAll(std::make_unique<TownState>(m_game));
                     } else {
+                        m_game.getParty().restoreCheckpoint(checkpoint);
                         m_statusMessage = LocalizationManager::getInstance().get("TITLE_SAVE_ERROR");
                     }
                 } else if (m_selectedMenuIndex == 0) {
-                    if (Party::hasRecoverableSave()) {
-                        m_confirmingNewGame = true;
-                        m_statusMessage = LocalizationManager::getInstance().get("TITLE_NEW_CONFIRM");
-                    } else {
-                        SessionRng::startNewGlobalSession();
-                        auto saveResult = m_game.getParty().startNewGame();
-                        if (!saveResult.durabilityConfirmed()) {
-                            m_statusMessage = LocalizationManager::getInstance().get("TITLE_DURABILITY_UNKNOWN");
-                        } else if (saveResult) {
-                            m_game.getStates().replaceAll(std::make_unique<TownState>(m_game));
-                        } else {
-                            m_statusMessage = LocalizationManager::getInstance().get("TITLE_SAVE_ERROR");
-                        }
-                    }
+                    m_confirmingNewGame = true;
+                    m_statusMessage = LocalizationManager::getInstance().get("TITLE_NEW_CONFIRM");
                 } else if (m_selectedMenuIndex == 1) {
+                    const bool recoveryContext = m_game.getParty().hasActiveSaveSession() ||
+                                                 Party::hasRecoverableSave();
                     auto loadResult = m_game.getParty().loadFromFile();
                     if (loadResult) {
                         const auto savedSeed = m_game.getParty().getLastSessionSeed();
@@ -83,15 +75,27 @@ void TitleState::handleInput(const sf::Event& event) {
                             SessionRng::global() = SessionRng(
                                 savedSeed, m_game.getParty().getSessionRngDrawCount());
                         }
+                        if (m_game.getParty().needsSaveMigration()) {
+                            const auto migrationResult = m_game.getParty().saveToFile();
+                            if (!migrationResult.durabilityConfirmed()) {
+                                m_statusMessage = LocalizationManager::getInstance().get("TITLE_DURABILITY_UNKNOWN");
+                                return;
+                            }
+                            if (!migrationResult) {
+                                m_statusMessage = LocalizationManager::getInstance().get("TITLE_SAVE_ERROR");
+                                return;
+                            }
+                        }
                         if (m_game.getParty().isCampaignCompleted()) {
                             m_game.getStates().replaceAll(std::make_unique<VictoryState>(m_game));
                         } else {
                             m_game.getStates().replaceAll(std::make_unique<TownState>(m_game));
                         }
-                    } else if (loadResult.status == PersistenceStatus::NotFound) {
-                        m_statusMessage = LocalizationManager::getInstance().get("TITLE_NO_SAVE");
                     } else {
-                        m_statusMessage = LocalizationManager::getInstance().get("TITLE_CORRUPT_SAVE");
+                        if (recoveryContext) m_game.getParty().markRecoveryPending();
+                        m_statusMessage = LocalizationManager::getInstance().get(
+                            loadResult.status == PersistenceStatus::NotFound
+                                ? "TITLE_NO_SAVE" : "TITLE_CORRUPT_SAVE");
                     }
                 } else if (m_selectedMenuIndex == 2) {
                     std::cout << "[FSM] TitleState에서 SettingsState로 상태 진입(Push)을 요청합니다." << std::endl;
@@ -211,7 +215,7 @@ void TitleState::initTexts() {
 
     // 3. 저작권 크레딧 설정
     m_creditText.setFont(font);
-    m_creditText.setString("Crawlmaster 0.9.4 - PRE-RELEASE DEMO CANDIDATE");
+    m_creditText.setString("Crawlmaster 0.10.0 - PRE-RELEASE DEMO CANDIDATE");
     m_creditText.setCharacterSize(14);
     m_creditText.setFillColor(sf::Color(130, 170, 130));
     

@@ -25,6 +25,29 @@ enum class CharacterClass {
     CLERIC
 };
 
+enum class Gender {
+    MALE,
+    FEMALE,
+    NON_BINARY,
+    UNSPECIFIED
+};
+
+enum class Ability {
+    STRENGTH,
+    DEXTERITY,
+    CONSTITUTION,
+    INTELLIGENCE,
+    WISDOM,
+    CHARISMA
+};
+
+struct CharacterIdentity {
+    std::string name;
+    int age = 20;
+    Gender gender = Gender::MALE;
+    CharacterClass characterClass = CharacterClass::WARRIOR;
+};
+
 // 6대 D&D 능력치 구조체
 struct AbilityScore {
     int strength = 10;
@@ -45,6 +68,7 @@ struct AbilityScore {
 class Character {
 public:
     Character(std::string name, CharacterClass charClass);
+    Character(CharacterIdentity identity, AbilityScore abilities);
     ~Character() = default;
 
     // 주사위 4d6 Drop-Lowest 방식으로 능력치 6종을 무작위 롤링 셋업
@@ -75,6 +99,8 @@ public:
 
     // Getter 함수들
     std::string getName() const;
+    int getAge() const;
+    Gender getGender() const;
     CharacterClass getClass() const;
     std::string getClassString() const;
     int getLevel() const;
@@ -102,6 +128,8 @@ public:
     void applyBless(int turns);
     int getStrBuffAmount() const;
     int getDexBuffAmount() const;
+    int getStrBuffTurns() const;
+    int getDexBuffTurns() const;
     int getBlessTurns() const;
 
     // 전투 중 턴 시작/종료 시 상태이상 데미지 및 턴 차감 정산
@@ -120,9 +148,13 @@ public:
     static std::unique_ptr<Character> fromJson(const nlohmann::json& j, int schemaVersion = 2);
 
 private:
-    Character(std::string name, CharacterClass charClass, bool initializeRandomState);
+    Character(CharacterIdentity identity, bool initializeRandomState);
+
+    void initializeLevelOneState();
 
     std::string m_name;                             // 캐릭터 이름
+    int m_age;                                      // 0은 이전 저장에서 이관한 미상 나이
+    Gender m_gender;                                // 신규 생성은 미상 값을 허용하지 않음
     CharacterClass m_class;                         // 캐릭터 클래스
     int m_level;                                    // 레벨 (1~3)
     int m_xp;                                       // 누적 경험치

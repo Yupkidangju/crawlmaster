@@ -14,7 +14,10 @@ namespace crawl {
 // 퀘스트 타입 정의
 enum class QuestType {
     KILL,       // 적 처치 임무
-    COLLECT     // 아이템 수집 임무
+    COLLECT,    // 아이템 수집 임무 (구세이브 호환)
+    DEFEAT_BOSS,
+    RETRIEVE_KEY_ITEM,
+    FIND_NPC
 };
 
 // Quest 클래스: 개별 임무의 진행도, 보상, 타입 및 완수 플래그 관리
@@ -22,7 +25,7 @@ class Quest {
 public:
     Quest(std::string id, std::string name, std::string desc, QuestType type,
           std::string targetId, int targetCount, int goldReward, int xpReward,
-          std::vector<std::string> rewardItemIds = {});
+          std::vector<std::string> rewardItemIds = {}, int targetFloor = 0);
     ~Quest() = default;
 
     // 진행 수량 업데이트 시도
@@ -33,6 +36,8 @@ public:
 
     // 퀘스트 성공 달성 요건 충족 유무 확인
     bool checkCompletion() const;
+    bool markObjectiveComplete();
+    bool isReadyToReport() const;
 
     // Getter 함수들
     std::string getId() const;
@@ -44,12 +49,15 @@ public:
     int getCurrentCount() const;
     int getGoldReward() const;
     int getXpReward() const;
+    int getTargetFloor() const;
     bool isCompleted() const;
     void setCompleted(bool completed);
     const std::vector<std::string>& getRewardItemIds() const;
 
     static std::vector<std::string> getCanonicalIds();
+    static std::vector<std::string> getOfferableIds();
     static std::shared_ptr<Quest> createCanonical(const std::string& id);
+    bool matchesCanonicalDefinition() const;
 
     // --- JSON 세이브 연동 직렬화/역직렬화 ---
     nlohmann::json toJson() const;
@@ -66,6 +74,8 @@ private:
     int m_goldReward;
     int m_xpReward;
     bool m_isCompleted;
+    bool m_readyToReport = false;
+    int m_targetFloor = 0;
     std::vector<std::string> m_rewardItemIds;
 };
 

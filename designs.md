@@ -10,7 +10,8 @@
 전체 UI는 모노크롬 네온 그린 테마를 기본으로 하며, 특정 상호작용 및 경고 시에 제한적인 레트로 단색 계열을 채용한다.
 * `COLOR_BG`: `#050B05` (거의 검은색에 가까운 어두운 녹색 배경)
 * `COLOR_NEON_GREEN`: `#33FF33` (주요 벽면 선, HUD 라인, 일반 텍스트)
-* `COLOR_BRIGHT_GREEN`: `#66FF66` (포커스된 메뉴 항목, 플레이어 위치 화살표)
+* `COLOR_BRIGHT_GREEN`: `#66FF66` (포커스된 메뉴 항목, 직접 밟은 미니맵 바닥)
+* `COLOR_PLAYER_CYAN`: `#66FFFF` (미니맵 현재 파티 위치 방향 삼각형)
 * `COLOR_AMBER`: `#FFB000` (상점 골드 정보, 경고, 퀘스트 완료 표시, 버프 상태)
 * `COLOR_RED`: `#FF3333` (대미지 수치, 심각한 상태이상(독, 마비), 사망 캐릭터 표시)
 * `COLOR_MUTED`: `#114411` (비활성 UI 테두리, 보이지 않는 미니맵 탐색 경계)
@@ -28,8 +29,52 @@
 
 ## 3. ASCII UI 레이아웃 구조도
 
+### 3.0 캐릭터 생성 화면 (CharacterCreationState)
+
+길드의 생성 메뉴는 독립 상태 화면을 열며 `신원 입력 -> 능력치 배분 -> 최종 확인`의 세 단계를 사용한다.
+
+```text
++-----------------------------------------------------------------------------+
+|                         === CHARACTER CREATION ===                          |
+|                                                                             |
+|  Name   : > Aria_          Age: 20    Gender: Female    Class: Rogue        |
+|  Trait  : Quick Reflexes (+2 Initiative)                                    |
+|                                                                             |
+|  STR 11 -> 11   DEX 14 -> 16   CON 12 -> 13   Remaining Points: 4          |
+|  INT 10 -> 10   WIS  9 ->  9   CHA 13 -> 13   Next Cost: 3                 |
+|                                                                             |
+|  [Up/Down] Select | [Left/Right] Change | [R] Reroll | [Enter] Continue     |
+|  [Esc] Back/Cancel                                                            |
++-----------------------------------------------------------------------------+
+```
+
+* 이름은 `TextEntered`와 Backspace로 편집하고 선택 행과 오류 이유를 텍스트로 표시한다.
+* 200% 텍스트에서는 단계별 핵심 정보만 표시하여 겹침을 피한다.
+* 최종 확인 전에는 파티와 저장 파일을 변경하지 않으며 저장 실패 시 입력 내용을 유지한다.
+
 ### 3.1 3D 던전 탐험 화면 (DungeonState)
 화면 크기: 1024x768 고정
+
+* HUD는 현재 층 `B1/B2/B3`과 현재 칸에서 가능한 `E` 상호작용을 텍스트로 표시한다.
+* 수락한 목표는 시야로 발견하기 전에는 미니맵에 표시하지 않는다. 발견 후 중요품은 마름모, NPC는 사각 윤곽, 퀘스트 보스는 적색 십자 표식으로 구분하여 색상만으로 의미를 전달하지 않는다.
+* `E`는 계단 이동·중요품 회수·NPC 대화에 사용하고 `Q`는 퀘스트 일지를 push한다. 자동 이동은 아이템·NPC·계단을 자동 활성화하지 않지만 quest boss/BossGate 칸에 진입하면 수동 이동과 동일하게 전투를 시작한다.
+
+### 3.1.1 퀘스트 일지 (QuestJournalState)
+
+```text
++-----------------------------------------------------------------------------+
+| === QUEST JOURNAL ===                                      Key Items: 1     |
+| > Moon Seal Recovery       B1  READY TO REPORT                               |
+|   Clue: beyond the old door                                                 |
+|   Crypt Warden             B2  ACTIVE                                        |
+|   Missing Scout            B3  ACTIVE                                        |
+|                                                                             |
+| Up/Down: Scroll                                              Esc: Back       |
++-----------------------------------------------------------------------------+
+```
+
+* 일지는 읽기 전용이며 수주·보상 지급은 성에서만 수행한다.
+* 200% 배율에서는 선택된 퀘스트 한 건의 이름·상태·층·단서와 스크롤 위치만 표시한다.
 
 ```text
 +-----------------------------------------------------+-----------------------+
@@ -237,7 +282,7 @@
   * 직접 밟지 않고 FOW만 해제된 바닥: 어두운 녹색 (`COLOR_MUTED`, `#114411`).
   * 탐험 과정에서 드러난 벽: 회색 (`#808080`) 사각형 아웃라인.
   * 탐험하지 않은 미답지: 검정색 (`COLOR_BG`, `#050B05`).
-* **방향 표시:** 플레이어가 바라보는 방향에 따라 `^` (북), `>` (동), `v` (남), `<` (서) 기호로 위치 표시.
+* **현재 위치와 방향:** 지나간 녹색 바닥 위에 청록색(`#66FFFF`) 방향 삼각형과 어두운 외곽선을 최상단으로 그린다. 색상뿐 아니라 삼각형 꼭짓점 방향으로 북·동·남·서를 구분한다.
 
 ### 4.3 로그 윈도우 (Log Window)
 * **텍스트 스크롤:** 최대 5줄의 최근 로그 보관.
@@ -297,12 +342,18 @@ DungeonState ──> Boss Gate ──> CombatState(boss) ──> VictoryState �
 CombatState  ──> TPK ─────────────────────────────> GameOverState ──> TitleState
 ```
 
-* **파괴적 행동:** New Game, 파티원 해고, 아이템 판매는 대상·결과를 먼저 보여주며 `Enter` 재확인 전에는 domain state와 save bytes를 바꾸지 않는다. `Esc`는 항상 취소다.
+* **파괴적 행동:** save 유무와 관계없이 New Game, 파티원 해고, 아이템 판매는 대상·결과를 먼저 보여주며 `Enter` 재확인 전에는 domain state와 save bytes를 바꾸지 않는다. `Esc`는 항상 취소다.
 * **전투 아이템/단일 아군 주문:** `item/skill list -> target -> preview -> confirm/cancel` 순서다. 효과가 없는 대상은 confirm할 수 없고 자원과 턴을 소비하지 않는다.
-* **Dungeon HUD:** renderer는 실제 Party snapshot을 입력받아 최대 4개 slot의 이름, 직업, HP/MaxHP, Dead, Poison, Paralysis, Bless를 그린다. 빈 slot은 고정 캐릭터명으로 채우지 않는다.
+* **Dungeon HUD:** renderer는 실제 Party snapshot과 현재 층/발견 목표를 입력받아 최대 4개 slot의 이름, 직업, HP/MaxHP, Dead, Poison, Paralysis, Bless를 그린다. 빈 slot은 고정 캐릭터명으로 채우지 않는다.
 * **지속 피드백:** save failure, corrupt save, TPK, campaign completion은 로그 큐가 아니라 banner 또는 전용 State에 유지한다.
 * **입력:** 모든 화면은 `Esc=취소/뒤로`, `O=설정 열기 또는 설정 닫기`, 방향키=선택 이동, `Enter=확정`을 공통 의미로 사용한다. 숫자 단축키는 표시된 항목과 정확히 일치해야 한다.
-* **타이포그래피:** 본문 16px, 보조문 14px를 최소값으로 한다. 1024x768을 유지하되 넘치는 목록은 scroll하고 문장은 wrap한다.
+* **타이포그래피:** 고정 1024x768 TUI의 일반 본문과 보조문은 14px, 핵심 상태·선택은 16px 이상을 사용한다. 넘치는 목록은 scroll하고 문장은 wrap한다.
+
+### 4.8 종료 저장 확인
+
+* 활성 세션에서 창 닫기 저장이 `Saved`면 종료한다. `CommittedDurabilityUnknown` 또는 실패면 창을 유지하고 원인과 `Enter=재시도`, `Esc=저장 없이 종료`를 지속 표시한다.
+* TPK/Continue 복구 실패의 `recoveryPending` 화면에서는 자동 저장을 시도하지 않는다. `Enter`는 checkpoint load 재시도, `Esc`는 저장 없이 종료이며, New Game은 Title의 기존 확인 흐름에서만 실행한다.
+* CharacterInfo 상세는 HP/주문 슬롯뿐 아니라 Dead, Poison, Paralysis, STR/DEX buff와 Bless의 남은 턴을 텍스트로 표시한다.
 * **색상:** 핵심 본문/선택/오류 텍스트는 배경 `#050B05` 대비 4.5:1 이상을 사용한다. 저대비 `#114411`은 장식/비활성 프레임에만 사용하며 의미 전달을 단독으로 맡기지 않는다.
 * **다국어:** 화면에 표시되는 문장과 item/monster/skill/quest 이름은 localization key와 placeholder로 구성한다. 5개 locale에서 key 누락과 text bounds를 검증한다.
 * 모든 UI 컨트롤은 키보드 입력을 기본으로 한다. 미니맵 클릭을 통한 자동 이동만 예외이다.

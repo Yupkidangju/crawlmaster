@@ -9,6 +9,8 @@
 #include <iterator>
 #include <iostream>
 #include <queue>
+#include <stdexcept>
+#include <string>
 
 namespace crawl {
 
@@ -24,11 +26,14 @@ DungeonMap::DungeonMap()
     }
 }
 
-void DungeonMap::generate() {
-    generate(static_cast<std::uint32_t>(SessionRng::global().rollRange(0, INT_MAX)));
+void DungeonMap::generate(std::uint32_t seed) {
+    generate(seed, 3);
 }
 
-void DungeonMap::generate(std::uint32_t seed) {
+void DungeonMap::generate(std::uint32_t seed, int floorNumber) {
+    if (floorNumber < 1 || floorNumber > 3) {
+        throw std::invalid_argument("던전 층은 1~3이어야 합니다.");
+    }
     SessionRng generationRandom(seed);
     // 1. 모든 셀을 벽으로 완전 리셋
     for (int x = 0; x < MAP_WIDTH; ++x) {
@@ -55,7 +60,7 @@ void DungeonMap::generate(std::uint32_t seed) {
     m_playerY = 1;
     m_playerDir = Direction::NORTH;
 
-    placeLandmarks();
+    placeLandmarks(floorNumber);
 
     std::cout << "[Map] 20x20 DFS 던전 맵 랜덤 생성 완료." << std::endl;
 }
@@ -175,6 +180,11 @@ int DungeonMap::getProgressPercent() const {
     return std::clamp(distance * 100 / m_bossDistance, 0, 100);
 }
 
+int DungeonMap::getDistanceFromStart(int x, int y) const {
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return -1;
+    return m_distanceFromStart[x][y];
+}
+
 void DungeonMap::setPlayerPos(int x, int y) {
     m_playerX = x;
     m_playerY = y;
@@ -283,7 +293,7 @@ void DungeonMap::createLoops(SessionRng& random) {
     }
 }
 
-void DungeonMap::placeLandmarks() {
+void DungeonMap::recomputeDistances() {
     int distance[MAP_WIDTH][MAP_HEIGHT];
     for (auto& column : distance) {
         std::fill(std::begin(column), std::end(column), -1);
@@ -310,13 +320,32 @@ void DungeonMap::placeLandmarks() {
         }
     }
 
-    const int targetDoorDistance = distance[farthest.first][farthest.second] / 2;
+    m_bossDistance = std::max(1, distance[farthest.first][farthest.second]);
+    for (int x = 0; x < MAP_WIDTH; ++x) {
+        for (int y = 0; y < MAP_HEIGHT; ++y) {
+            m_distanceFromStart[x][y] = distance[x][y];
+        }
+    }
+}
+
+void DungeonMap::placeLandmarks(int floorNumber) {
+    recomputeDistances();
+    std::pair<int, int> farthest = {1, 1};
+    for (int x = 0; x < MAP_WIDTH; ++x) {
+        for (int y = 0; y < MAP_HEIGHT; ++y) {
+            if (m_distanceFromStart[x][y] > m_distanceFromStart[farthest.first][farthest.second]) {
+                farthest = {x, y};
+            }
+        }
+    }
+
+    const int targetDoorDistance = m_distanceFromStart[farthest.first][farthest.second] / 2;
     std::pair<int, int> door = {1, 1};
     int bestDifference = INT_MAX;
     for (int x = 0; x < MAP_WIDTH; ++x) {
         for (int y = 0; y < MAP_HEIGHT; ++y) {
-            if (distance[x][y] <= 0 || std::pair{x, y} == farthest) continue;
-            const int difference = std::abs(distance[x][y] - targetDoorDistance);
+            if (m_distanceFromStart[x][y] <= 0 || std::pair{x, y} == farthest) continue;
+            const int difference = std::abs(m_distanceFromStart[x][y] - targetDoorDistance);
             if (difference < bestDifference) {
                 bestDifference = difference;
                 door = {x, y};
@@ -325,12 +354,146 @@ void DungeonMap::placeLandmarks() {
     }
 
     m_tiles[door.first][door.second] = TileType::DOOR;
-    m_tiles[farthest.first][farthest.second] = TileType::BOSS_GATE;
-    m_bossDistance = std::max(1, distance[farthest.first][farthest.second]);
+    m_tiles[farthest.first][farthest.second] = floorNumber < 3
+        ? TileType::DOWNSTAIRS : TileType::BOSS_GATE;
+}
+
+nlohmann::json DungeonMap::toJson() const {
+    auto tileCode = [](TileType tile) {
+        switch (tile) {
+            case TileType::WALL: return '#';
+            case TileType::EMPTY: return '.';
+            case TileType::DOOR: return 'D';
+            case TileType::UPSTAIRS: return 'U';
+            case TileType::DOWNSTAIRS: return 'V';
+            case TileType::BOSS_GATE: return 'B';
+        }
+        return '#';
+    };
+    nlohmann::json tiles = nlohmann::json::array();
+    nlohmann::json visited = nlohmann::json::array();
+    nlohmann::json stepped = nlohmann::json::array();
+    for (int y = 0; y < MAP_HEIGHT; ++y) {
+        std::string tileRow;
+        std::string visitedRow;
+        std::string steppedRow;
+        for (int x = 0; x < MAP_WIDTH; ++x) {
+            tileRow.push_back(tileCode(m_tiles[x][y]));
+            visitedRow.push_back(m_visited[x][y] ? '1' : '0');
+            steppedRow.push_back(m_stepped[x][y] ? '1' : '0');
+        }
+        tiles.push_back(tileRow);
+        visited.push_back(visitedRow);
+        stepped.push_back(steppedRow);
+    }
+    return {{"tiles", tiles}, {"visited", visited}, {"stepped", stepped}};
+}
+
+DungeonMap DungeonMap::fromJson(const nlohmann::json& json, int floorNumber) {
+    if (!json.is_object() || floorNumber < 1 || floorNumber > 3) {
+        throw std::runtime_error("던전 층 snapshot 형식이 잘못됐습니다.");
+    }
+    const auto& tiles = json.at("tiles");
+    const auto& visited = json.at("visited");
+    const auto& stepped = json.at("stepped");
+    if (!tiles.is_array() || !visited.is_array() || !stepped.is_array() ||
+        tiles.size() != MAP_HEIGHT || visited.size() != MAP_HEIGHT || stepped.size() != MAP_HEIGHT) {
+        throw std::runtime_error("던전 층 snapshot 높이가 잘못됐습니다.");
+    }
+
+    DungeonMap map;
+    int upCount = 0;
+    int downCount = 0;
+    int bossCount = 0;
+    auto decode = [](char code) {
+        switch (code) {
+            case '#': return TileType::WALL;
+            case '.': return TileType::EMPTY;
+            case 'D': return TileType::DOOR;
+            case 'U': return TileType::UPSTAIRS;
+            case 'V': return TileType::DOWNSTAIRS;
+            case 'B': return TileType::BOSS_GATE;
+            default: throw std::runtime_error("알 수 없는 던전 타일 코드입니다.");
+        }
+    };
+    for (int y = 0; y < MAP_HEIGHT; ++y) {
+        const std::string tileRow = tiles.at(y).get<std::string>();
+        const std::string visitedRow = visited.at(y).get<std::string>();
+        const std::string steppedRow = stepped.at(y).get<std::string>();
+        if (tileRow.size() != MAP_WIDTH || visitedRow.size() != MAP_WIDTH ||
+            steppedRow.size() != MAP_WIDTH) {
+            throw std::runtime_error("던전 층 snapshot 너비가 잘못됐습니다.");
+        }
+        for (int x = 0; x < MAP_WIDTH; ++x) {
+            if ((visitedRow[x] != '0' && visitedRow[x] != '1') ||
+                (steppedRow[x] != '0' && steppedRow[x] != '1')) {
+                throw std::runtime_error("던전 탐험 비트가 잘못됐습니다.");
+            }
+            map.m_tiles[x][y] = decode(tileRow[x]);
+            map.m_visited[x][y] = visitedRow[x] == '1';
+            map.m_stepped[x][y] = steppedRow[x] == '1';
+            if (map.m_stepped[x][y] && (!map.m_visited[x][y] || map.m_tiles[x][y] == TileType::WALL)) {
+                throw std::runtime_error("밟은 타일은 방문한 이동 가능 타일이어야 합니다.");
+            }
+            if (map.m_tiles[x][y] == TileType::UPSTAIRS) ++upCount;
+            if (map.m_tiles[x][y] == TileType::DOWNSTAIRS) ++downCount;
+            if (map.m_tiles[x][y] == TileType::BOSS_GATE) ++bossCount;
+            if ((x == 0 || y == 0 || x == MAP_WIDTH - 1 || y == MAP_HEIGHT - 1) &&
+                map.m_tiles[x][y] != TileType::WALL) {
+                throw std::runtime_error("던전 외벽은 모두 벽이어야 합니다.");
+            }
+        }
+    }
+    if (upCount != 1 || downCount != (floorNumber < 3 ? 1 : 0) ||
+        bossCount != (floorNumber == 3 ? 1 : 0)) {
+        throw std::runtime_error("층별 계단 또는 최종 관문 수가 잘못됐습니다.");
+    }
+    if (map.m_tiles[1][1] != TileType::UPSTAIRS) {
+        throw std::runtime_error("층 입구 계단은 (1,1)에 있어야 합니다.");
+    }
+    map.m_playerX = 1;
+    map.m_playerY = 1;
+    map.m_playerDir = Direction::NORTH;
+    map.recomputeDistances();
+    map.validateForFloor(floorNumber);
+    return map;
+}
+
+void DungeonMap::validateForFloor(int floorNumber) const {
+    if (floorNumber < 1 || floorNumber > 3) throw std::runtime_error("던전 층 번호가 잘못됐습니다.");
+    int upCount = 0;
+    int downCount = 0;
+    int bossCount = 0;
+    int doorCount = 0;
+    int farthestDistance = 0;
+    int terminalDistance = -1;
     for (int x = 0; x < MAP_WIDTH; ++x) {
         for (int y = 0; y < MAP_HEIGHT; ++y) {
-            m_distanceFromStart[x][y] = distance[x][y];
+            const TileType tile = m_tiles[x][y];
+            if ((x == 0 || y == 0 || x == MAP_WIDTH - 1 || y == MAP_HEIGHT - 1) &&
+                tile != TileType::WALL) throw std::runtime_error("던전 외벽이 열려 있습니다.");
+            if (m_stepped[x][y] && (!m_visited[x][y] || tile == TileType::WALL)) {
+                throw std::runtime_error("밟은 타일 상태가 유효하지 않습니다.");
+            }
+            if (tile == TileType::UPSTAIRS) ++upCount;
+            if (tile == TileType::DOWNSTAIRS) { ++downCount; terminalDistance = m_distanceFromStart[x][y]; }
+            if (tile == TileType::BOSS_GATE) { ++bossCount; terminalDistance = m_distanceFromStart[x][y]; }
+            if (tile == TileType::DOOR) ++doorCount;
+            if (isWalkable(x, y)) {
+                if (m_distanceFromStart[x][y] < 0) throw std::runtime_error("도달할 수 없는 던전 바닥이 있습니다.");
+                farthestDistance = std::max(farthestDistance, m_distanceFromStart[x][y]);
+            }
         }
+    }
+    if (m_tiles[1][1] != TileType::UPSTAIRS || !m_visited[1][1] || !m_stepped[1][1]) {
+        throw std::runtime_error("층 입구의 계단/FOW 상태가 잘못됐습니다.");
+    }
+    if (upCount != 1 || doorCount != 1 || downCount != (floorNumber < 3 ? 1 : 0) ||
+        bossCount != (floorNumber == 3 ? 1 : 0)) {
+        throw std::runtime_error("층 landmark 수가 canonical 계약과 다릅니다.");
+    }
+    if (terminalDistance != farthestDistance) {
+        throw std::runtime_error("하행 계단 또는 최종 관문이 최장 거리 타일이 아닙니다.");
     }
 }
 

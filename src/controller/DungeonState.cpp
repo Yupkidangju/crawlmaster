@@ -3,6 +3,7 @@
 #include "controller/CombatState.hpp"
 #include "controller/CharacterInfoState.hpp"
 #include "controller/SettingsState.hpp"
+#include "controller/QuestJournalState.hpp"
 #include "core/Game.hpp"
 #include "core/LocalizationManager.hpp"
 #include "core/SessionRng.hpp"
@@ -13,8 +14,13 @@ namespace crawl {
 
 DungeonState::DungeonState(Game& game)
     : m_game(game), m_renderer(game) {
-    // 1. 20x20 DFS 미로 무작위 생성 수행
-    m_map.generate();
+    auto& world = m_game.getParty().getWorld();
+    if (!world.isGenerated()) {
+        const std::uint32_t seed = SessionRng::global().seed();
+        world.generate(seed == 0U ? 0x9E3779B9U : seed);
+    }
+    map().setPlayerPos(1, 1);
+    map().setPlayerDir(Direction::NORTH);
 
     // 2. 초기 스폰 위치 및 주변 미니맵 안개(시야) 개방
     revealFogOfWar();
@@ -33,17 +39,17 @@ DungeonState::DungeonState(Game& game)
 }
 
 void DungeonState::revealFogOfWar() {
-    int px = m_map.getPlayerX();
-    int py = m_map.getPlayerY();
-    Direction dir = m_map.getPlayerDir();
+    int px = map().getPlayerX();
+    int py = map().getPlayerY();
+    Direction dir = map().getPlayerDir();
 
     // 현재 발을 디딘 곳을 밟은 타일로 영구 저장
-    m_map.setStepped(px, py, true);
+    map().setStepped(px, py, true);
 
     // 플레이어 주변 3x3 범위 안개 제거
     for (int dx = -1; dx <= 1; ++dx) {
         for (int dy = -1; dy <= 1; ++dy) {
-            m_map.setVisited(px + dx, py + dy, true);
+            map().setVisited(px + dx, py + dy, true);
         }
     }
 
@@ -61,15 +67,17 @@ void DungeonState::revealFogOfWar() {
         int cx = px + d * fx;
         int cy = py + d * fy;
 
-        m_map.setVisited(cx, cy, true);
-        m_map.setVisited(cx - rx, cy - ry, true);
-        m_map.setVisited(cx + rx, cy + ry, true);
+        map().setVisited(cx, cy, true);
+        map().setVisited(cx - rx, cy - ry, true);
+        map().setVisited(cx + rx, cy + ry, true);
 
         // 시선상 벽을 만나면 더 이상 투영 및 시야 개방 불가
-        if (m_map.getTile(cx, cy) == TileType::WALL) {
+        if (map().getTile(cx, cy) == TileType::WALL) {
             break;
         }
     }
+    m_worldDirty = true;
+    discoverQuestObjects();
 }
 
 void DungeonState::handleInput(const sf::Event& event) {
@@ -84,8 +92,8 @@ void DungeonState::handleInput(const sf::Event& event) {
             int ty = static_cast<int>((my - 40.0f) / 12.0f);
 
             // 목적지가 안개가 걷힌 지역이자 이동 가능한 타일인지 체크
-            if (m_map.isVisited(tx, ty) && m_map.isWalkable(tx, ty)) {
-                auto path = m_map.findPath(m_map.getPlayerX(), m_map.getPlayerY(), tx, ty);
+            if (map().isVisited(tx, ty) && map().isWalkable(tx, ty)) {
+                auto path = map().findPath(map().getPlayerX(), map().getPlayerY(), tx, ty);
                 if (!path.empty()) {
                     m_autoPath = path;
                     m_autoPathIndex = 0;
@@ -113,9 +121,9 @@ void DungeonState::handleInput(const sf::Event& event) {
             case sf::Keyboard::W:
             case sf::Keyboard::Up:
                 // 전방 좌표 검출
-                m_map.getNextCoords(nextX, nextY, true);
-                if (m_map.isWalkable(nextX, nextY)) {
-                    m_map.setPlayerPos(nextX, nextY);
+                map().getNextCoords(nextX, nextY, true);
+                if (map().isWalkable(nextX, nextY)) {
+                    map().setPlayerPos(nextX, nextY);
                     revealFogOfWar();
                     addLog("> " + LocalizationManager::getInstance().get("DUNGEON_MOVED_FORWARD"));
                     if (checkCurrentTileLog()) return;
@@ -137,9 +145,9 @@ void DungeonState::handleInput(const sf::Event& event) {
             case sf::Keyboard::S:
             case sf::Keyboard::Down:
                 // 후방 좌표 검출
-                m_map.getNextCoords(nextX, nextY, false);
-                if (m_map.isWalkable(nextX, nextY)) {
-                    m_map.setPlayerPos(nextX, nextY);
+                map().getNextCoords(nextX, nextY, false);
+                if (map().isWalkable(nextX, nextY)) {
+                    map().setPlayerPos(nextX, nextY);
                     revealFogOfWar();
                     addLog("> " + LocalizationManager::getInstance().get("DUNGEON_MOVED_BACKWARD"));
                     if (checkCurrentTileLog()) return;
@@ -161,7 +169,7 @@ void DungeonState::handleInput(const sf::Event& event) {
             case sf::Keyboard::A:
             case sf::Keyboard::Left:
                 // 좌회전 90도
-                m_map.turn(false);
+                map().turn(false);
                 revealFogOfWar();
                 addLog("> " + LocalizationManager::getInstance().get("DUNGEON_TURNED_LEFT"));
                 break;
@@ -169,14 +177,14 @@ void DungeonState::handleInput(const sf::Event& event) {
             case sf::Keyboard::D:
             case sf::Keyboard::Right:
                 // 우회전 90도
-                m_map.turn(true);
+                map().turn(true);
                 revealFogOfWar();
                 addLog("> " + LocalizationManager::getInstance().get("DUNGEON_TURNED_RIGHT"));
                 break;
  
             case sf::Keyboard::Escape:
                 // 현재 서 있는 위치가 마을 계단(UPSTAIRS)인지 체크
-                if (m_map.getTile(m_map.getPlayerX(), m_map.getPlayerY()) == TileType::UPSTAIRS) {
+                if (m_floorNumber == 1 && map().getTile(map().getPlayerX(), map().getPlayerY()) == TileType::UPSTAIRS) {
                     addLog("> " + LocalizationManager::getInstance().get("DUNGEON_RETURNING_TOWN"));
                     const auto saveResult = m_game.getParty().saveToFile();
                     if (!saveResult.durabilityConfirmed()) {
@@ -200,9 +208,17 @@ void DungeonState::handleInput(const sf::Event& event) {
                 // [v0.6.0] 캐릭터 장비 및 인벤토리 관리 화면 기동
                 m_game.getStates().pushState(std::make_unique<CharacterInfoState>(m_game, false));
                 break;
+
+            case sf::Keyboard::E:
+                interactCurrentTile();
+                break;
  
             case sf::Keyboard::O: // [v0.9.0] 설정 화면 기동 추가
                 m_game.getStates().pushState(std::make_unique<SettingsState>(m_game));
+                break;
+
+            case sf::Keyboard::Q:
+                m_game.getStates().pushState(std::make_unique<QuestJournalState>(m_game));
                 break;
  
             default:
@@ -220,6 +236,10 @@ void DungeonState::update(sf::Time deltaTime) {
             stepAutoMove();
         }
     }
+    if (m_worldDirty) {
+        m_persistenceElapsed += deltaTime;
+        if (m_persistenceElapsed >= sf::seconds(2.0f)) persistWorldCheckpoint();
+    }
 }
 
 void DungeonState::stepAutoMove() {
@@ -228,8 +248,8 @@ void DungeonState::stepAutoMove() {
         return;
     }
 
-    int px = m_map.getPlayerX();
-    int py = m_map.getPlayerY();
+    int px = map().getPlayerX();
+    int py = map().getPlayerY();
 
     auto [nx, ny] = m_autoPath[m_autoPathIndex];
 
@@ -237,17 +257,17 @@ void DungeonState::stepAutoMove() {
     int dx = nx - px;
     int dy = ny - py;
     if (dx == 1) {
-        m_map.setPlayerDir(Direction::EAST);
+        map().setPlayerDir(Direction::EAST);
     } else if (dx == -1) {
-        m_map.setPlayerDir(Direction::WEST);
+        map().setPlayerDir(Direction::WEST);
     } else if (dy == 1) {
-        m_map.setPlayerDir(Direction::SOUTH);
+        map().setPlayerDir(Direction::SOUTH);
     } else if (dy == -1) {
-        m_map.setPlayerDir(Direction::NORTH);
+        map().setPlayerDir(Direction::NORTH);
     }
 
     // 위치 이동 및 시야 갱신
-    m_map.setPlayerPos(nx, ny);
+    map().setPlayerPos(nx, ny);
     revealFogOfWar();
 
     addLog("> " + LocalizationManager::getInstance().get("DUNGEON_AUTO_MOVING"));
@@ -277,7 +297,8 @@ void DungeonState::stepAutoMove() {
 
 void DungeonState::draw(sf::RenderWindow& window) {
     // 렌더러를 호출해 와이어프레임 3D 및 HUD 정보 출력
-    m_renderer.render(window, m_map, m_game.getParty(), m_logQueue);
+    m_renderer.render(window, map(), m_game.getParty(), m_logQueue,
+                      m_floorNumber, m_game.getParty().getWorld().getObjects());
 }
 
 void DungeonState::addLog(const std::string& message) {
@@ -289,15 +310,28 @@ void DungeonState::addLog(const std::string& message) {
 }
 
 bool DungeonState::checkCurrentTileLog() {
-    int px = m_map.getPlayerX();
-    int py = m_map.getPlayerY();
+    int px = map().getPlayerX();
+    int py = map().getPlayerY();
 
-    if (m_map.getTile(px, py) == TileType::UPSTAIRS) {
+    if (auto* object = m_game.getParty().getWorld().findObjectAt(m_floorNumber, px, py);
+        object && object->kind == WorldObjectKind::QUEST_BOSS &&
+        object->state != WorldObjectState::RESOLVED) {
+        if (!m_game.getParty().hasQuest(object->questId)) {
+            addLog("> " + LocalizationManager::getInstance().get("DUNGEON_QUEST_REQUIRED"));
+            return false;
+        }
+        object->state = WorldObjectState::DISCOVERED;
+        m_game.getStates().pushState(std::make_unique<CombatState>(m_game, EncounterSpec{
+            EncounterTier::LATE, object->targetId, object->questId, object->id, true, false}));
+        return true;
+    }
+
+    if (map().getTile(px, py) == TileType::UPSTAIRS) {
         auto& lmInstance = LocalizationManager::getInstance();
         addLog("> " + lmInstance.get("MSG_DUNGEON_ESC"));
-    } else if (m_map.getTile(px, py) == TileType::DOOR) {
+    } else if (map().getTile(px, py) == TileType::DOOR) {
         addLog("> " + LocalizationManager::getInstance().get("MSG_DUNGEON_LANDMARK"));
-    } else if (m_map.getTile(px, py) == TileType::BOSS_GATE) {
+    } else if (map().getTile(px, py) == TileType::BOSS_GATE) {
         if (m_game.getParty().isCampaignCompleted()) {
             addLog("> " + LocalizationManager::getInstance().get("MSG_DUNGEON_BOSS_COMPLETE"));
             return false;
@@ -310,10 +344,115 @@ bool DungeonState::checkCurrentTileLog() {
 }
 
 EncounterTier DungeonState::currentEncounterTier() const {
-    const int progress = m_map.getProgressPercent();
+    const int progress = map().getProgressPercent();
     if (progress <= 33) return EncounterTier::EARLY;
     if (progress <= 66) return EncounterTier::MIDDLE;
     return EncounterTier::LATE;
+}
+
+void DungeonState::discoverQuestObjects() {
+    for (auto& object : m_game.getParty().getWorld().getObjects()) {
+        if (object.floor == m_floorNumber && object.state == WorldObjectState::PRESENT &&
+            m_game.getParty().hasQuest(object.questId) && map().isVisited(object.x, object.y)) {
+            object.state = WorldObjectState::DISCOVERED;
+            m_worldDirty = true;
+        }
+    }
+}
+
+bool DungeonState::persistWorldCheckpoint() {
+    const auto result = m_game.getParty().saveToFile();
+    m_persistenceElapsed = sf::Time::Zero;
+    if (!result.durabilityConfirmed()) {
+        m_worldDirty = false;
+        addLog("> " + LocalizationManager::getInstance().get("MSG_DURABILITY_UNKNOWN_STAY"));
+        return true;
+    }
+    if (!result) {
+        addLog("> " + LocalizationManager::getInstance().get("MSG_SAVE_FAILED_STAY"));
+        return false;
+    }
+    m_worldDirty = false;
+    return true;
+}
+
+bool DungeonState::changeFloor(int floorNumber) {
+    if (floorNumber < 1 || floorNumber > DungeonWorld::FLOOR_COUNT) return false;
+    const int previousFloor = m_floorNumber;
+    const PartyCheckpoint checkpoint = m_game.getParty().captureCheckpoint();
+    if (!persistWorldCheckpoint()) return false;
+    m_floorNumber = floorNumber;
+    int entryX = 1;
+    int entryY = 1;
+    if (floorNumber < previousFloor) {
+        for (int x = 0; x < DungeonMap::MAP_WIDTH; ++x) {
+            for (int y = 0; y < DungeonMap::MAP_HEIGHT; ++y) {
+                if (map().getTile(x, y) == TileType::DOWNSTAIRS) {
+                    entryX = x;
+                    entryY = y;
+                }
+            }
+        }
+    }
+    map().setPlayerPos(entryX, entryY);
+    map().setPlayerDir(Direction::NORTH);
+    revealFogOfWar();
+    addLog("> " + LocalizationManager::getInstance().format("DUNGEON_FLOOR_CHANGED",
+        {{"floor", std::to_string(m_floorNumber)}}));
+    if (persistWorldCheckpoint()) return true;
+    m_game.getParty().restoreCheckpoint(checkpoint);
+    m_floorNumber = previousFloor;
+    return false;
+}
+
+bool DungeonState::interactCurrentTile() {
+    const int x = map().getPlayerX();
+    const int y = map().getPlayerY();
+    const TileType tile = map().getTile(x, y);
+    if (tile == TileType::DOWNSTAIRS) return changeFloor(m_floorNumber + 1);
+    if (tile == TileType::UPSTAIRS) {
+        if (m_floorNumber > 1) return changeFloor(m_floorNumber - 1);
+        sf::Event event{};
+        event.type = sf::Event::KeyPressed;
+        event.key.code = sf::Keyboard::Escape;
+        handleInput(event);
+        return true;
+    }
+
+    auto* object = m_game.getParty().getWorld().findObjectAt(m_floorNumber, x, y);
+    if (!object || object->kind == WorldObjectKind::QUEST_BOSS ||
+        object->state == WorldObjectState::RESOLVED) {
+        addLog("> " + LocalizationManager::getInstance().get("DUNGEON_NOTHING_TO_INTERACT"));
+        return false;
+    }
+    if (!m_game.getParty().hasQuest(object->questId)) {
+        addLog("> " + LocalizationManager::getInstance().get("DUNGEON_QUEST_REQUIRED"));
+        return false;
+    }
+    const PartyCheckpoint checkpoint = m_game.getParty().captureCheckpoint();
+
+    if (object->kind == WorldObjectKind::QUEST_ITEM &&
+        !m_game.getParty().hasKeyItem(object->targetId)) {
+        if (!m_game.getParty().addKeyItem(object->targetId)) return false;
+    }
+    if (!m_game.getParty().markQuestObjectiveComplete(object->questId)) return false;
+    object->state = WorldObjectState::RESOLVED;
+    m_worldDirty = true;
+    if (!persistWorldCheckpoint()) {
+        m_game.getParty().restoreCheckpoint(checkpoint);
+        return false;
+    }
+    addLog("> " + LocalizationManager::getInstance().get(
+        object->kind == WorldObjectKind::QUEST_ITEM ? "DUNGEON_ITEM_RECOVERED" : "DUNGEON_NPC_FOUND"));
+    return true;
+}
+
+DungeonMap& DungeonState::map() {
+    return m_game.getParty().getWorld().getFloor(m_floorNumber);
+}
+
+const DungeonMap& DungeonState::map() const {
+    return m_game.getParty().getWorld().getFloor(m_floorNumber);
 }
 
 } // namespace crawl

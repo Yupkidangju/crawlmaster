@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "run_directory": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/3",
+  "reports": [
+    {
+      "path": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/3/sub_audit_01_character_lifecycle.md",
+      "sha256": "f8b941645aa8faeadcdecd2298c10505e0f6c8de95149a5d5055d030cc2f9cbb",
+      "size": 53797,
+      "sealed_at_utc": "2026-09-04T07:34:28.662922+00:00"
+    },
+    {
+      "path": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/3/sub_audit_02_quest_system.md",
+      "sha256": "d6be9dfdce7f48183fd7fc82c135852a62a05a0837cde0d5572b7359bade43b0",
+      "size": 40844,
+      "sealed_at_utc": "2026-09-04T07:33:50.236878+00:00"
+    },
+    {
+      "path": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/3/sub_audit_03_world_persistence.md",
+      "sha256": "751cbc870b41750e890b5516a8108f58b3bec0d31970c440de6d0334bbf35c03",
+      "size": 33712,
+      "sealed_at_utc": "2026-09-04T07:26:42.186772+00:00"
+    },
+    {
+      "path": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/3/sub_audit_04_contract_docs.md",
+      "sha256": "57e41ccc90f13b4f6993f8ad0fc5fd0ee60106cf494f86e8aaf4cf4ba922340e",
+      "size": 42715,
+      "sealed_at_utc": "2026-09-04T07:35:44.940199+00:00"
+    },
+    {
+      "path": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/3/sub_audit_04_contract_docs_supplement_1.md",
+      "sha256": "8ec7a1c2d3616d025406ec37a50857ede79dc2b4715c7ed3c86106c1373dd46f",
+      "size": 28497,
+      "sealed_at_utc": "2026-09-04T07:51:54.194063+00:00"
+    },
+    {
+      "path": "/mnt/Projects_SSD/cpp/crawlmaster/docs/multi_audit/3/sub_audit_05_resilience_runtime.md",
+      "sha256": "e269961a22a56fb03592cefa82607535645df787ac60e7ce5bf8d92a7516b990",
+      "size": 35358,
+      "sealed_at_utc": "2026-09-04T07:35:28.617749+00:00"
+    }
+  ],
+  "missing_source_reports": [],
+  "finalized_at_utc": "2026-09-04T07:52:13.477510+00:00"
+}

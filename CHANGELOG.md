@@ -21,7 +21,7 @@
 * 혼합 CJK/ASCII가 tofu로 렌더되던 Droid font를 Noto Sans CJK로 교체하고 Ubuntu Mono 파일명을 내부 family와 일치시켰다.
 * 5 locale × 3 scale의 font 및 production State/substate raster, source literal guard, artifact SPDX generator, OSV/Grype gate를 추가했다.
 * root legacy `save.json`을 `tests/fixtures/save_v1.json`으로 이동하고 Skill API/screen-shake 문서 drift를 정리했다.
-* Linux 전체 CTest 13개와 MinGW Windows 전체 target compile/ZIP 정적 검증을 추가했다. 이후 hosted MSVC gate는 run `33786241695`에서 통과했고 native attestation은 아직 `UNVERIFIED`다.
+* Linux 전체 CTest 13개와 MinGW Windows 전체 target compile/ZIP 정적 검증을 추가했다. 이후 hosted MSVC gate와 native SLSA/SPDX attestation은 run `33786241695` attempt 2에서 통과했다.
 
 ### Added (추가됨)
 * 한 층 수직 슬라이스에 Door 랜드마크, 최종 BossGate, Dragon Whelp 보스, Victory/Game Over 상태를 연결했다.
@@ -44,7 +44,7 @@
 
 ### Security / Remaining gates
 * 임시 파일 flush/fsync, backup 회전, atomic replace, 심볼릭 링크 대상 거부와 failure regression을 추가했다.
-* Windows Server 2022 hosted MSVC build/CTest/package/startup은 run `33786241695`에서 검증했다. GitHub native attestation, clean Windows 10/11 VC++ runtime, 실제 OS high-DPI·장시간 밸런스와 legal/support identity는 아직 `UNVERIFIED` 또는 `Human Review Required`다.
+* Windows Server 2022 hosted MSVC build/CTest/package/startup과 GitHub native SLSA/SPDX attestation은 run `33786241695` attempt 2에서 검증했다. Clean Windows 10/11 VC++ runtime, 실제 OS high-DPI·장시간 밸런스와 legal/support identity는 아직 `UNVERIFIED` 또는 `Human Review Required`다.
 
 ## [0.9.4] - 2026-07-13
 

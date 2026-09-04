@@ -141,7 +141,7 @@
 
 * **결정:** SFML 2.6.1과 nlohmann/json 3.11.3을 immutable commit으로 고정하고 정적 링크 기반 CMake install/CPack 패키지를 만든다.
 * **배경:** 시스템 SFML 우선 탐색과 개발 build tree RUNPATH는 동일 소스가 다른 산출물을 만들고 재배치를 막았다.
-* **결과:** Linux TGZ와 Windows ZIP을 대상으로 CTest와 package smoke를 CI에 두며 run `33786241695`에서 양쪽 artifact를 검증했다. GitHub native attestation은 private plan 제한으로 발급되지 않았고 폰트 provenance와 별개인 법률/지원 주체는 사람 승인 전까지 차단 gate다.
+* **결과:** Linux TGZ와 Windows ZIP을 대상으로 CTest와 package smoke를 CI에 두며 run `33786241695` attempt 2에서 양쪽 artifact와 native SLSA/SPDX attestation을 검증했다. 폰트 provenance와 별개인 법률/지원 주체는 사람 승인 전까지 차단 gate다.
 
 ## 13. 저장 가능한 RNG 위치와 공통 전투/i18n 경계
 

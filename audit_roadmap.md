@@ -7,8 +7,8 @@
 
 현재 독립 결과: `docs/audit/audit_report_10.md`  
 현재 수정 계획: `docs/audit/remediation_plan_12.md`
-최신 재감사: `docs/audit/audit_report_12.md`
-현재 구현 상태: **로컬 Needs Fix 0, FIN-F014 hosted gate 해소, FIN-F015 attestation/legal과 사람 실행 evidence 잔존**
+최신 재감사: `docs/audit/audit_report_13.md`
+현재 구현 상태: **로컬 Needs Fix 0, FIN-F014와 FIN-F015 supply-chain gate 해소, legal/high-DPI/장시간 사람 evidence 잔존**
 
 ## 1. 변경 전 기준선
 
@@ -67,5 +67,5 @@
 
 - FIN-F009: Linux 5-locale × 3-scale production raster는 확보. 실제 OS high-DPI와 모든 장시간 동적 overlay 판독
 - FIN-F014: hosted Ubuntu/Windows artifact와 Windows MSVC CTest/package/5초 startup은 완료. clean Windows 10/11 VC++ runtime 조건은 잔여 위험
-- FIN-F015: 폰트 provenance/SBOM/scanner 구성은 확보. hosted signature/attestation와 legal/support human sign-off
+- FIN-F015: 폰트 provenance/SBOM/scanner와 hosted SLSA/SPDX attestation은 완료. legal/support human sign-off 잔존
 - 실제 30~60분 완주와 여러 seed의 정량 밸런스 측정

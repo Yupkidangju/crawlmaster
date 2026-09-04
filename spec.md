@@ -512,5 +512,5 @@ public:
 * **UI:** HUD는 실제 0~4인 Party snapshot, HP/사망/독/마비/Bless를 표시한다. 본문 16px, 보조문 14px 미만을 사용하지 않고 핵심 텍스트 대비 4.5:1 이상을 목표로 한다.
 * **i18n/input:** 화면 chrome뿐 아니라 item/monster/skill 이름·설명과 사용자 전투/상태 로그도 locale key+placeholder로 출력한다. `O`는 Town의 모든 substate와 Combat의 플레이어 조작 상태에서 Settings를 열고, `Esc`는 현재 overlay를 먼저 취소한다. 적 턴에는 추가 입력으로 상태를 변형하지 않는다.
 * **i18n 검증:** 5 locale × 75/100/200%에서 key parity, 필수 placeholder, text bounds/wrap/focus/input transcript를 자동 검사하고 실제 CJK raster/high-DPI 판독은 별도 실행 증거가 있을 때만 완료한다.
-* **배포/권리:** Linux 패키지와 Linux/Windows CI를 만든다. 폰트 원출처·재배포 권리와 법률/지원 주체는 사람 승인 전까지 `Human Review Required`이며 상용 PASS를 차단한다.
+* **배포/권리:** Linux 패키지와 Linux/Windows CI를 만들고 source `4f988483bf5cbcfdce4c79a6aabab4a67a7043f9`의 native SLSA/SPDX attestation을 검증했다. 폰트 원출처·재배포 권리와 법률/지원 주체는 사람 승인 전까지 `Human Review Required`이며 상용 PASS를 차단한다.
 * 이 섹션은 Turn 1 finding과 충돌하는 이전 완료 표현보다 우선한다. 실제 구현·테스트·패키지 증거가 없는 항목은 완료로 표시하지 않는다.

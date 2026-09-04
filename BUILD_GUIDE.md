@@ -115,7 +115,7 @@ python3 scripts/generate_release_sbom.py \
 grype sbom:build/release/package/Crawlmaster-Linux-artifact.spdx.json --fail-on high
 ```
 
-- Windows Server 2022 hosted MSVC build, CTest 13/13, ZIP/checksum/resource/startup, SBOM와 Grype high gate는 source `4f988483bf5cbcfdce4c79a6aabab4a67a7043f9`의 run `33786241695`에서 통과했다. package와 명령 증거는 `docs/audit/audit_report_12.md`에 기록했다.
-- GitHub native provenance/SBOM attestation은 user-owned private repository plan에서 지원되지 않아 발급되지 않았다. public 전환, Enterprise Cloud 또는 승인된 Sigstore 대체 경로 전까지 release gate로 유지한다.
+- Windows Server 2022 hosted MSVC build, CTest 13/13, ZIP/checksum/resource/startup, SBOM와 Grype high gate는 source `4f988483bf5cbcfdce4c79a6aabab4a67a7043f9`의 run `33786241695` attempt 2에서 통과했다.
+- 같은 attempt에서 Linux/Windows SLSA provenance와 SPDX 2.3 SBOM attestation을 발급하고 GitHub CLI bundle 검증을 통과했다. URL과 명령 증거는 `docs/audit/audit_report_13.md`에 기록했다.
 - macOS는 현재 범위 밖이다.
 - 폰트의 byte identity/upstream/license/raster는 `FONT_PROVENANCE.md`로 닫았다. 제품 법률/지원 주체는 Human Review 전까지 유료 배포를 차단한다.

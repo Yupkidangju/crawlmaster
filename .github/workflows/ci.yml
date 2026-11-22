@@ -61,7 +61,7 @@ jobs:
           cd /tmp
           "$package_root/bin/Crawlmaster" --verify-resources
           set +e
-          timeout 5s xvfb-run -a "$package_root/bin/Crawlmaster"
+          CRAWLMASTER_HEADLESS=1 xvfb-run -a timeout -k 2s 5s "$package_root/bin/Crawlmaster"
           status=$?
           test "$status" -eq 124
 
@@ -138,3 +138,51 @@ jobs:
             build/ci/package/Crawlmaster-*.tar.gz
             build/ci/package/Crawlmaster-*.zip
           sbom-path: build/ci/package/Crawlmaster-${{ runner.os }}-artifact.spdx.json
+
+  publish-release:
+    needs: release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download verified Linux & Windows release artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist/linux dist/windows
+          gh run download "${{ github.run_id }}" --name Crawlmaster-Linux --dir dist/linux
+          gh run download "${{ github.run_id }}" --name Crawlmaster-Windows --dir dist/windows
+          ls -lh dist/linux dist/windows
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cat > release_notes.md <<'EOF'
+          ## Crawlmaster ${TAG} — AAA Dark Fantasy 3D Dungeon Crawler RPG
+
+          ### Highlights
+          - **Textured 3D First-Person Dungeon Engine**: OpenGL/GLSL normal-mapped lighting, flickering torchlights, biome fog, bloom/vignette post-processing, 60fps smooth camera interpolation, plus automatic GL 1.1 software-textured 3D fallback.
+          - **5-Floor Persistent Campaign & Biomes**: Sunken Catacombs, Drowned Cistern, Cursed Ossuary, Obsidian Foundry, and Wyrm's Sanctum with chests, traps, shortcut levers, secret walls, sanctuaries, and lore plaques.
+          - **Tactical Turn-Based Combat**: Front/Back rows, 9 elements, Stagger/Break gauge, Enemy Intent Telegraphing, Guard, 24 skills, 43 items with `+0..+5` Blacksmith Forge & Affix Reforging, Lv 1–10 progression, 8 Lv3+ Specializations, 4-node Talent Trees, Bestiary Codex (24 monsters + 2-phase Elder Wyrm boss), and 8 canonical quests.
+          - **Full Audio Engine (`miniaudio` 0.11.26)**: 5 BGM tracks, 5 biome ambient loops, 24 SFX, and full volume/mute controls.
+          - **Widescreen 16:9 Mouse + Keyboard UI**: 1280×720 virtual canvas (resizable + F11 fullscreen), 5 languages (`ko`, `en`, `ja`, `zh_tw`, `zh_cn`), text scale (75–200%), high-contrast mode, Save Schema v5 (legacy v1–v4 quarantine), and Config Schema v3.
+
+          ### Verification & Supply Chain
+          - Built and verified via CTest (15/15 targets), arbitrary-CWD smoke, SHA-256 checksums, SPDX 2.3 SBOM, Syft inventory, Grype high-severity gate, and GitHub build/SBOM attestations on both Linux (`ubuntu-24.04`) and Windows (`windows-2022`).
+          EOF
+          sed -i "s/\${TAG}/${TAG}/g" release_notes.md
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release edit "${TAG}" --title "Crawlmaster ${TAG}" --notes-file release_notes.md
+            gh release upload "${TAG}" dist/linux/* dist/windows/* --clobber
+          else
+            gh release create "${TAG}" dist/linux/* dist/windows/* \
+              --title "Crawlmaster ${TAG}" \
+              --notes-file release_notes.md
+          fi

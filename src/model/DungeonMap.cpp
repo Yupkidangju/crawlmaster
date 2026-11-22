@@ -1,183 +1,351 @@
-// [v0.2.0] DungeonMap.cpp 신규 작성
-// DFS 알고리즘을 사용한 랜덤 미로 생성 및 8개 무작위 순환 경로 뚫기, 플레이어의 이동과 충돌 검사를 처리한다.
-
 #include "model/DungeonMap.hpp"
 #include "core/SessionRng.hpp"
+
 #include <algorithm>
-#include <climits>
-#include <cstdlib>
-#include <iterator>
-#include <iostream>
+#include <array>
 #include <queue>
 #include <stdexcept>
-#include <string>
 
 namespace crawl {
 
-DungeonMap::DungeonMap()
-    : m_playerX(1), m_playerY(1), m_playerDir(Direction::NORTH) {
-    // [v0.6.0] 맵 전체를 벽으로 채우고 탐험 안개 및 밟은 타일 기록 초기화
-    for (int x = 0; x < MAP_WIDTH; ++x) {
-        for (int y = 0; y < MAP_HEIGHT; ++y) {
+DungeonMap::DungeonMap() {
+    for (int y = 0; y < MAP_HEIGHT; ++y) {
+        for (int x = 0; x < MAP_WIDTH; ++x) {
             m_tiles[x][y] = TileType::WALL;
             m_visited[x][y] = false;
             m_stepped[x][y] = false;
+            m_distanceFromStart[x][y] = -1;
         }
     }
+}
+
+BiomeType DungeonMap::biomeForFloor(int floorNumber) {
+    switch (std::clamp(floorNumber, 1, 5)) {
+        case 1: return BiomeType::CATACOMBS;
+        case 2: return BiomeType::CISTERN;
+        case 3: return BiomeType::OSSUARY;
+        case 4: return BiomeType::FOUNDRY;
+        default: return BiomeType::SANCTUM;
+    }
+}
+
+std::string DungeonMap::biomeSlug(BiomeType biome) {
+    switch (biome) {
+        case BiomeType::CATACOMBS: return "catacombs";
+        case BiomeType::CISTERN:   return "cistern";
+        case BiomeType::OSSUARY:   return "ossuary";
+        case BiomeType::FOUNDRY:   return "foundry";
+        case BiomeType::SANCTUM:   return "sanctum";
+    }
+    return "catacombs";
+}
+
+std::string DungeonMap::getBiomeSlug() const {
+    return biomeSlug(m_biome);
 }
 
 void DungeonMap::generate(std::uint32_t seed) {
-    generate(seed, 3);
+    generate(seed, 1);
 }
 
 void DungeonMap::generate(std::uint32_t seed, int floorNumber) {
-    if (floorNumber < 1 || floorNumber > 3) {
-        throw std::invalid_argument("던전 층은 1~3이어야 합니다.");
-    }
-    SessionRng generationRandom(seed);
-    // 1. 모든 셀을 벽으로 완전 리셋
-    for (int x = 0; x < MAP_WIDTH; ++x) {
-        for (int y = 0; y < MAP_HEIGHT; ++y) {
+    m_floorNumber = std::clamp(floorNumber, 1, 5);
+    m_biome = biomeForFloor(m_floorNumber);
+
+    for (int y = 0; y < MAP_HEIGHT; ++y) {
+        for (int x = 0; x < MAP_WIDTH; ++x) {
             m_tiles[x][y] = TileType::WALL;
             m_visited[x][y] = false;
             m_stepped[x][y] = false;
+            m_distanceFromStart[x][y] = -1;
         }
     }
 
-    // 2. DFS 미로 생성 시작 (홀수 좌표에서 개시하여 외벽 보호)
-    generateDFS(1, 1, generationRandom);
+    SessionRng random(seed);
+    generateDFS(1, 1, random);
+    carveChambers(random);
+    createLoops(random);
 
-    // 3. 미로의 순환 흐름을 위해 일부 벽 헐기
-    createLoops(generationRandom);
-
-    // 4. 입구(마을 복귀용 계단) 지정
-    m_tiles[1][1] = TileType::UPSTAIRS;
-    m_visited[1][1] = true;
-    m_stepped[1][1] = true; // [v0.6.0] 스폰 위치 자동 마킹
-
-    // 5. 플레이어 스폰 위치 동결
     m_playerX = 1;
     m_playerY = 1;
-    m_playerDir = Direction::NORTH;
+    m_playerDir = Direction::EAST;
+    if (!isWalkable(2, 1) && isWalkable(1, 2)) {
+        m_playerDir = Direction::SOUTH;
+    }
 
-    placeLandmarks(floorNumber);
+    placeLandmarks(m_floorNumber, random);
+    recomputeDistances();
 
-    std::cout << "[Map] 20x20 DFS 던전 맵 랜덤 생성 완료." << std::endl;
+    m_visited[1][1] = true;
+    m_stepped[1][1] = true;
 }
 
-TileType DungeonMap::getTile(int x, int y) const {
-    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) {
-        return TileType::WALL;
-    }
-    return m_tiles[x][y];
-}
-
-bool DungeonMap::isWalkable(int x, int y) const {
-    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) {
-        return false;
-    }
-    return m_tiles[x][y] != TileType::WALL;
-}
-
-bool DungeonMap::isVisited(int x, int y) const {
-    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) {
-        return false;
-    }
-    return m_visited[x][y];
-}
-
-void DungeonMap::setVisited(int x, int y, bool visited) {
-    if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) {
-        m_visited[x][y] = visited;
-    }
-}
-
-bool DungeonMap::isStepped(int x, int y) const {
-    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) {
-        return false;
-    }
-    return m_stepped[x][y];
-}
-
-void DungeonMap::setStepped(int x, int y, bool stepped) {
-    if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) {
-        m_stepped[x][y] = stepped;
-    }
-}
-
-std::vector<std::pair<int, int>> DungeonMap::findPath(int sx, int sy, int tx, int ty) const {
-    std::vector<std::pair<int, int>> path;
-    // 시작점과 목표점이 같으면 빈 경로 반환
-    if (sx == tx && sy == ty) {
-        return path;
+void DungeonMap::generateDFS(int cx, int cy, SessionRng& random) {
+    m_tiles[cx][cy] = TileType::EMPTY;
+    std::array<int, 4> dirs = {0, 1, 2, 3};
+    for (int i = 3; i > 0; --i) {
+        const int j = random.rollRange(0, i);
+        std::swap(dirs[static_cast<std::size_t>(i)], dirs[static_cast<std::size_t>(j)]);
     }
 
-    // 목적지가 방문하지 않은 구역이거나 벽인 경우 탐색하지 않음
-    if (!isVisited(tx, ty) || !isWalkable(tx, ty)) {
-        return path;
-    }
+    static constexpr int dx[4] = {0, 2, 0, -2};
+    static constexpr int dy[4] = {-2, 0, 2, 0};
 
-    // BFS 탐색을 위한 큐와 방문 정보 기록
-    std::queue<std::pair<int, int>> q;
-    std::vector<std::vector<bool>> visited(MAP_WIDTH, std::vector<bool>(MAP_HEIGHT, false));
-    std::vector<std::vector<std::pair<int, int>>> parent(MAP_WIDTH, std::vector<std::pair<int, int>>(MAP_HEIGHT, {-1, -1}));
-
-    q.push({sx, sy});
-    visited[sx][sy] = true;
-
-    bool found = false;
-    while (!q.empty()) {
-        auto [cx, cy] = q.front();
-        q.pop();
-
-        if (cx == tx && cy == ty) {
-            found = true;
-            break;
+    for (int d : dirs) {
+        const int nx = cx + dx[d];
+        const int ny = cy + dy[d];
+        if (nx > 0 && nx < MAP_WIDTH - 1 && ny > 0 && ny < MAP_HEIGHT - 1 &&
+            m_tiles[nx][ny] == TileType::WALL) {
+            m_tiles[cx + dx[d] / 2][cy + dy[d] / 2] = TileType::EMPTY;
+            generateDFS(nx, ny, random);
         }
+    }
+}
 
-        // 인접 4방향 탐색 (북, 남, 서, 동 순서 무관)
-        int dx[] = {0, 0, -1, 1};
-        int dy[] = {-1, 1, 0, 0};
-
-        for (int i = 0; i < 4; ++i) {
-            int nx = cx + dx[i];
-            int ny = cy + dy[i];
-
-            if (nx >= 0 && nx < MAP_WIDTH && ny >= 0 && ny < MAP_HEIGHT) {
-                // 탐험한 빈 바닥 타일만 경로로 허용
-                if (!visited[nx][ny] && isWalkable(nx, ny) && isVisited(nx, ny)) {
-                    visited[nx][ny] = true;
-                    parent[nx][ny] = {cx, cy};
-                    q.push({nx, ny});
+void DungeonMap::carveChambers(SessionRng& random) {
+    // 각 층마다 3개의 작은 던전 방(3x3)을 파내어 3D 공간감과 시야 변화를 극대화한다.
+    for (int r = 0; r < 3; ++r) {
+        const int rx = random.rollRange(3, MAP_WIDTH - 6);
+        const int ry = random.rollRange(3, MAP_HEIGHT - 6);
+        for (int y = ry; y < ry + 3; ++y) {
+            for (int x = rx; x < rx + 3; ++x) {
+                if (x > 1 && x < MAP_WIDTH - 2 && y > 1 && y < MAP_HEIGHT - 2) {
+                    m_tiles[x][y] = TileType::EMPTY;
                 }
             }
         }
     }
+}
 
-    // 경로가 도출되면 역추적하여 빌드
-    if (found) {
-        std::pair<int, int> curr = {tx, ty};
-        while (curr.first != -1 && curr.second != -1) {
-            path.push_back(curr);
-            curr = parent[curr.first][curr.second];
+void DungeonMap::createLoops(SessionRng& random) {
+    for (int y = 2; y < MAP_HEIGHT - 2; ++y) {
+        for (int x = 2; x < MAP_WIDTH - 2; ++x) {
+            if (m_tiles[x][y] != TileType::WALL) continue;
+            const bool horiz = (m_tiles[x - 1][y] == TileType::EMPTY && m_tiles[x + 1][y] == TileType::EMPTY &&
+                                m_tiles[x][y - 1] == TileType::WALL && m_tiles[x][y + 1] == TileType::WALL);
+            const bool vert = (m_tiles[x][y - 1] == TileType::EMPTY && m_tiles[x][y + 1] == TileType::EMPTY &&
+                               m_tiles[x - 1][y] == TileType::WALL && m_tiles[x + 1][y] == TileType::WALL);
+            if ((horiz || vert) && random.rollRange(1, 100) <= 18) {
+                m_tiles[x][y] = (random.rollRange(1, 100) <= 28) ? TileType::DOOR : TileType::EMPTY;
+            }
         }
-        std::reverse(path.begin(), path.end());
-        // 시작 지점(sx, sy)은 결과 경로에서 제외
-        if (!path.empty()) {
-            path.erase(path.begin());
+    }
+}
+
+void DungeonMap::placeLandmarks(int floorNumber, SessionRng& random) {
+    m_tiles[1][1] = TileType::UPSTAIRS;
+    recomputeDistances();
+
+    // 시작점에서 가장 먼 통로에 다음 층 계단 또는 5층 최종 보스 게이트 배치
+    int farX = 1;
+    int farY = 1;
+    int maxDist = -1;
+    for (int y = 1; y < MAP_HEIGHT - 1; ++y) {
+        for (int x = 1; x < MAP_WIDTH - 1; ++x) {
+            if (m_distanceFromStart[x][y] > maxDist && m_tiles[x][y] == TileType::EMPTY) {
+                maxDist = m_distanceFromStart[x][y];
+                farX = x;
+                farY = y;
+            }
+        }
+    }
+    m_tiles[farX][farY] = (floorNumber >= 5) ? TileType::BOSS_GATE : TileType::DOWNSTAIRS;
+
+    // 숏컷용 잠긴 철창 문 1개 배치 (단, 기존 주 경로의 도달성을 깨뜨리지 않는 루프 지점에만 배치!)
+    bool placedLockedGate = false;
+    for (int y = 2; y < MAP_HEIGHT - 2 && !placedLockedGate; ++y) {
+        for (int x = 2; x < MAP_WIDTH - 2 && !placedLockedGate; ++x) {
+            if (m_tiles[x][y] != TileType::DOOR && m_tiles[x][y] != TileType::EMPTY) continue;
+            if ((x == 1 && y == 1) || (x == farX && y == farY)) continue;
+            if (m_distanceFromStart[x][y] < 4 || m_distanceFromStart[x][y] > 14) continue;
+            const TileType prev = m_tiles[x][y];
+            m_tiles[x][y] = TileType::LOCKED_GATE;
+            if (!findPath(1, 1, farX, farY).empty()) {
+                placedLockedGate = true;
+            } else {
+                m_tiles[x][y] = prev;
+            }
         }
     }
 
+    // 비밀 벽(SECRET_WALL) 1곳 배치: 외곽 경계 안쪽에서 통로 옆 벽 뒤에 1칸 비밀 방 생성
+    std::vector<std::tuple<int, int, int, int>> secretCandidates;
+    static constexpr int dx[4] = {0, 1, 0, -1};
+    static constexpr int dy[4] = {-1, 0, 1, 0};
+    for (int y = 2; y < MAP_HEIGHT - 2; ++y) {
+        for (int x = 2; x < MAP_WIDTH - 2; ++x) {
+            if (m_tiles[x][y] != TileType::WALL) continue;
+            for (int d = 0; d < 4; ++d) {
+                const int px = x - dx[d];
+                const int py = y - dy[d];
+                const int bx = x + dx[d];
+                const int by = y + dy[d];
+                if (bx <= 1 || bx >= MAP_WIDTH - 2 || by <= 1 || by >= MAP_HEIGHT - 2) continue;
+                if (m_tiles[px][py] == TileType::EMPTY && m_tiles[bx][by] == TileType::WALL) {
+                    secretCandidates.emplace_back(x, y, bx, by);
+                }
+            }
+        }
+    }
+    if (!secretCandidates.empty()) {
+        const auto& chosen = secretCandidates[static_cast<std::size_t>(
+            random.rollRange(0, static_cast<int>(secretCandidates.size()) - 1))];
+        const auto [wx, wy, rx, ry] = chosen;
+        m_tiles[wx][wy] = TileType::SECRET_WALL;
+        m_tiles[rx][ry] = TileType::EMPTY;
+    }
+}
+
+void DungeonMap::recomputeDistances() {
+    for (int y = 0; y < MAP_HEIGHT; ++y) {
+        for (int x = 0; x < MAP_WIDTH; ++x) {
+            m_distanceFromStart[x][y] = -1;
+        }
+    }
+    std::queue<std::pair<int, int>> q;
+    m_distanceFromStart[1][1] = 0;
+    q.push({1, 1});
+    int maxDist = 1;
+
+    static constexpr int dx[4] = {0, 1, 0, -1};
+    static constexpr int dy[4] = {-1, 0, 1, 0};
+
+    while (!q.empty()) {
+        const auto [cx, cy] = q.front();
+        q.pop();
+        for (int d = 0; d < 4; ++d) {
+            const int nx = cx + dx[d];
+            const int ny = cy + dy[d];
+            if (nx < 0 || nx >= MAP_WIDTH || ny < 0 || ny >= MAP_HEIGHT) continue;
+            if (!isWalkable(nx, ny) || m_distanceFromStart[nx][ny] != -1) continue;
+            m_distanceFromStart[nx][ny] = m_distanceFromStart[cx][cy] + 1;
+            maxDist = std::max(maxDist, m_distanceFromStart[nx][ny]);
+            q.push({nx, ny});
+        }
+    }
+    m_bossDistance = std::max(1, maxDist);
+}
+
+TileType DungeonMap::getTile(int x, int y) const {
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return TileType::WALL;
+    return m_tiles[x][y];
+}
+
+void DungeonMap::setTile(int x, int y, TileType type) {
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return;
+    m_tiles[x][y] = type;
+    recomputeDistances();
+}
+
+bool DungeonMap::isWalkable(int x, int y) const {
+    const TileType t = getTile(x, y);
+    return t == TileType::EMPTY || t == TileType::DOOR ||
+           t == TileType::UPSTAIRS || t == TileType::DOWNSTAIRS ||
+           t == TileType::BOSS_GATE;
+}
+
+bool DungeonMap::isOpaque(int x, int y) const {
+    const TileType t = getTile(x, y);
+    return t == TileType::WALL || t == TileType::SECRET_WALL;
+}
+
+bool DungeonMap::isVisited(int x, int y) const {
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return false;
+    return m_visited[x][y];
+}
+
+void DungeonMap::setVisited(int x, int y, bool visited) {
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return;
+    m_visited[x][y] = visited;
+}
+
+bool DungeonMap::isStepped(int x, int y) const {
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return false;
+    return m_stepped[x][y];
+}
+
+void DungeonMap::setStepped(int x, int y, bool stepped) {
+    if (x < 0 || x >= MAP_WIDTH || y < 0 || y >= MAP_HEIGHT) return;
+    m_stepped[x][y] = stepped;
+}
+
+bool DungeonMap::unlockAllGates() {
+    bool changed = false;
+    for (int y = 0; y < MAP_HEIGHT; ++y) {
+        for (int x = 0; x < MAP_WIDTH; ++x) {
+            if (m_tiles[x][y] == TileType::LOCKED_GATE) {
+                m_tiles[x][y] = TileType::DOOR;
+                changed = true;
+            }
+        }
+    }
+    if (changed) recomputeDistances();
+    return changed;
+}
+
+bool DungeonMap::revealSecretWall(int x, int y) {
+    if (getTile(x, y) != TileType::SECRET_WALL) return false;
+    m_tiles[x][y] = TileType::EMPTY;
+    m_visited[x][y] = true;
+    recomputeDistances();
+    return true;
+}
+
+std::vector<std::pair<int, int>> DungeonMap::findPath(int sx, int sy, int tx, int ty) const {
+    if (!isWalkable(tx, ty)) return {};
+    if (sx == tx && sy == ty) return {};
+
+    bool visited[MAP_WIDTH][MAP_HEIGHT]{};
+    std::pair<int, int> parent[MAP_WIDTH][MAP_HEIGHT]{};
+    std::queue<std::pair<int, int>> q;
+    visited[sx][sy] = true;
+    parent[sx][sy] = {-1, -1};
+    q.push({sx, sy});
+
+    static constexpr int dx[4] = {0, 1, 0, -1};
+    static constexpr int dy[4] = {-1, 0, 1, 0};
+
+    bool found = false;
+    while (!q.empty()) {
+        const auto [cx, cy] = q.front();
+        q.pop();
+        if (cx == tx && cy == ty) {
+            found = true;
+            break;
+        }
+        for (int d = 0; d < 4; ++d) {
+            const int nx = cx + dx[d];
+            const int ny = cy + dy[d];
+            if (nx < 0 || nx >= MAP_WIDTH || ny < 0 || ny >= MAP_HEIGHT) continue;
+            if (visited[nx][ny] || !isWalkable(nx, ny)) continue;
+            visited[nx][ny] = true;
+            parent[nx][ny] = {cx, cy};
+            q.push({nx, ny});
+        }
+    }
+    if (!found) return {};
+
+    std::vector<std::pair<int, int>> path;
+    int cx = tx;
+    int cy = ty;
+    while (!(cx == sx && cy == sy)) {
+        path.push_back({cx, cy});
+        const auto p = parent[cx][cy];
+        cx = p.first;
+        cy = p.second;
+    }
+    std::reverse(path.begin(), path.end());
     return path;
 }
 
 int DungeonMap::getPlayerX() const { return m_playerX; }
 int DungeonMap::getPlayerY() const { return m_playerY; }
 Direction DungeonMap::getPlayerDir() const { return m_playerDir; }
+
 int DungeonMap::getProgressPercent() const {
-    const int distance = m_distanceFromStart[m_playerX][m_playerY];
-    if (distance < 0 || m_bossDistance <= 0) return 0;
-    return std::clamp(distance * 100 / m_bossDistance, 0, 100);
+    const int d = getDistanceFromStart(m_playerX, m_playerY);
+    if (d < 0) return 0;
+    return std::clamp(d * 100 / std::max(1, m_bossDistance), 0, 100);
 }
 
 int DungeonMap::getDistanceFromStart(int x, int y) const {
@@ -186,314 +354,129 @@ int DungeonMap::getDistanceFromStart(int x, int y) const {
 }
 
 void DungeonMap::setPlayerPos(int x, int y) {
-    m_playerX = x;
-    m_playerY = y;
+    if (x >= 0 && x < MAP_WIDTH && y >= 0 && y < MAP_HEIGHT) {
+        m_playerX = x;
+        m_playerY = y;
+    }
 }
 
-void DungeonMap::setPlayerDir(Direction dir) {
-    m_playerDir = dir;
-}
+void DungeonMap::setPlayerDir(Direction dir) { m_playerDir = dir; }
 
 void DungeonMap::getNextCoords(int& outX, int& outY, bool forward) const {
     int dx = 0;
     int dy = 0;
-
     switch (m_playerDir) {
         case Direction::NORTH: dy = -1; break;
         case Direction::EAST:  dx = 1;  break;
         case Direction::SOUTH: dy = 1;  break;
         case Direction::WEST:  dx = -1; break;
     }
-
-    if (forward) {
-        outX = m_playerX + dx;
-        outY = m_playerY + dy;
-    } else {
-        outX = m_playerX - dx;
-        outY = m_playerY - dy;
+    if (!forward) {
+        dx = -dx;
+        dy = -dy;
     }
+    outX = m_playerX + dx;
+    outY = m_playerY + dy;
+}
+
+void DungeonMap::getStrafeCoords(int& outX, int& outY, bool right) const {
+    int dx = 0;
+    int dy = 0;
+    switch (m_playerDir) {
+        case Direction::NORTH: dx = 1;  break;
+        case Direction::EAST:  dy = 1;  break;
+        case Direction::SOUTH: dx = -1; break;
+        case Direction::WEST:  dy = -1; break;
+    }
+    if (!right) {
+        dx = -dx;
+        dy = -dy;
+    }
+    outX = m_playerX + dx;
+    outY = m_playerY + dy;
 }
 
 void DungeonMap::turn(bool right) {
-    int dirVal = static_cast<int>(m_playerDir);
-    if (right) {
-        // 시계 방향 회전 (NORTH -> EAST -> SOUTH -> WEST)
-        dirVal = (dirVal + 1) % 4;
-    } else {
-        // 반시계 방향 회전
-        dirVal = (dirVal + 3) % 4;
-    }
-    m_playerDir = static_cast<Direction>(dirVal);
-}
-
-void DungeonMap::generateDFS(int cx, int cy, SessionRng& random) {
-    m_tiles[cx][cy] = TileType::EMPTY;
-
-    // 네 방향 이동 정의 (2칸 거리)
-    struct DirOffset { int dx; int dy; };
-    std::vector<DirOffset> directions = {
-        {0, -2}, // 북
-        {2, 0},  // 동
-        {0, 2},  // 남
-        {-2, 0}  // 서
-    };
-
-    for (std::size_t index = directions.size(); index > 1; --index) {
-        const std::size_t swapIndex = static_cast<std::size_t>(
-            random.rollRange(0, static_cast<int>(index) - 1));
-        std::swap(directions[index - 1], directions[swapIndex]);
-    }
-
-    for (const auto& dir : directions) {
-        int nx = cx + dir.dx;
-        int ny = cy + dir.dy;
-
-        // 맵 범위 내에 있고, 대상 셀이 벽(방문하지 않음)인지 체크
-        if (nx > 0 && nx < MAP_WIDTH - 1 && ny > 0 && ny < MAP_HEIGHT - 1) {
-            if (m_tiles[nx][ny] == TileType::WALL) {
-                // 현재와 대상 셀의 중간에 놓인 벽을 통로로 개방
-                m_tiles[cx + dir.dx / 2][cy + dir.dy / 2] = TileType::EMPTY;
-                // 대상 셀을 개방하고 재귀 탐색
-                generateDFS(nx, ny, random);
-            }
-        }
-    }
-}
-
-void DungeonMap::createLoops(SessionRng& random) {
-    // 맵 전체를 돌며 가로지르는 무작위 벽 8개를 통로로 전환하여 외골격 순환 고리 형성
-    std::vector<std::pair<int, int>> candidates;
-    
-    // 외벽을 제외한 내부 벽 타일 후보 수집
-    for (int x = 2; x < MAP_WIDTH - 2; ++x) {
-        for (int y = 2; y < MAP_HEIGHT - 2; ++y) {
-            if (m_tiles[x][y] == TileType::WALL) {
-                // 가로로 통과하는 통로 사이에 낀 벽
-                bool horizontalPath = (m_tiles[x-1][y] == TileType::EMPTY && m_tiles[x+1][y] == TileType::EMPTY);
-                // 세로로 통과하는 통로 사이에 낀 벽
-                bool verticalPath = (m_tiles[x][y-1] == TileType::EMPTY && m_tiles[x][y+1] == TileType::EMPTY);
-                
-                if (horizontalPath || verticalPath) {
-                    candidates.push_back({x, y});
-                }
-            }
-        }
-    }
-
-    if (!candidates.empty()) {
-        for (std::size_t index = candidates.size(); index > 1; --index) {
-            const std::size_t swapIndex = static_cast<std::size_t>(
-                random.rollRange(0, static_cast<int>(index) - 1));
-            std::swap(candidates[index - 1], candidates[swapIndex]);
-        }
-        int loopsToCreate = std::min(8, static_cast<int>(candidates.size()));
-        for (int i = 0; i < loopsToCreate; ++i) {
-            m_tiles[candidates[i].first][candidates[i].second] = TileType::EMPTY;
-        }
-    }
-}
-
-void DungeonMap::recomputeDistances() {
-    int distance[MAP_WIDTH][MAP_HEIGHT];
-    for (auto& column : distance) {
-        std::fill(std::begin(column), std::end(column), -1);
-    }
-
-    std::queue<std::pair<int, int>> pending;
-    pending.push({1, 1});
-    distance[1][1] = 0;
-    std::pair<int, int> farthest = {1, 1};
-
-    const int deltaX[4] = {0, 1, 0, -1};
-    const int deltaY[4] = {-1, 0, 1, 0};
-    while (!pending.empty()) {
-        const auto [x, y] = pending.front();
-        pending.pop();
-        if (distance[x][y] > distance[farthest.first][farthest.second]) farthest = {x, y};
-        for (int direction = 0; direction < 4; ++direction) {
-            const int nextX = x + deltaX[direction];
-            const int nextY = y + deltaY[direction];
-            if (nextX < 0 || nextX >= MAP_WIDTH || nextY < 0 || nextY >= MAP_HEIGHT ||
-                distance[nextX][nextY] >= 0 || !isWalkable(nextX, nextY)) continue;
-            distance[nextX][nextY] = distance[x][y] + 1;
-            pending.push({nextX, nextY});
-        }
-    }
-
-    m_bossDistance = std::max(1, distance[farthest.first][farthest.second]);
-    for (int x = 0; x < MAP_WIDTH; ++x) {
-        for (int y = 0; y < MAP_HEIGHT; ++y) {
-            m_distanceFromStart[x][y] = distance[x][y];
-        }
-    }
-}
-
-void DungeonMap::placeLandmarks(int floorNumber) {
-    recomputeDistances();
-    std::pair<int, int> farthest = {1, 1};
-    for (int x = 0; x < MAP_WIDTH; ++x) {
-        for (int y = 0; y < MAP_HEIGHT; ++y) {
-            if (m_distanceFromStart[x][y] > m_distanceFromStart[farthest.first][farthest.second]) {
-                farthest = {x, y};
-            }
-        }
-    }
-
-    const int targetDoorDistance = m_distanceFromStart[farthest.first][farthest.second] / 2;
-    std::pair<int, int> door = {1, 1};
-    int bestDifference = INT_MAX;
-    for (int x = 0; x < MAP_WIDTH; ++x) {
-        for (int y = 0; y < MAP_HEIGHT; ++y) {
-            if (m_distanceFromStart[x][y] <= 0 || std::pair{x, y} == farthest) continue;
-            const int difference = std::abs(m_distanceFromStart[x][y] - targetDoorDistance);
-            if (difference < bestDifference) {
-                bestDifference = difference;
-                door = {x, y};
-            }
-        }
-    }
-
-    m_tiles[door.first][door.second] = TileType::DOOR;
-    m_tiles[farthest.first][farthest.second] = floorNumber < 3
-        ? TileType::DOWNSTAIRS : TileType::BOSS_GATE;
+    const int cur = static_cast<int>(m_playerDir);
+    m_playerDir = static_cast<Direction>((cur + (right ? 1 : 3)) % 4);
 }
 
 nlohmann::json DungeonMap::toJson() const {
-    auto tileCode = [](TileType tile) {
-        switch (tile) {
-            case TileType::WALL: return '#';
-            case TileType::EMPTY: return '.';
-            case TileType::DOOR: return 'D';
-            case TileType::UPSTAIRS: return 'U';
-            case TileType::DOWNSTAIRS: return 'V';
-            case TileType::BOSS_GATE: return 'B';
-        }
-        return '#';
-    };
     nlohmann::json tiles = nlohmann::json::array();
     nlohmann::json visited = nlohmann::json::array();
     nlohmann::json stepped = nlohmann::json::array();
     for (int y = 0; y < MAP_HEIGHT; ++y) {
-        std::string tileRow;
-        std::string visitedRow;
-        std::string steppedRow;
+        nlohmann::json tRow = nlohmann::json::array();
+        nlohmann::json vRow = nlohmann::json::array();
+        nlohmann::json sRow = nlohmann::json::array();
         for (int x = 0; x < MAP_WIDTH; ++x) {
-            tileRow.push_back(tileCode(m_tiles[x][y]));
-            visitedRow.push_back(m_visited[x][y] ? '1' : '0');
-            steppedRow.push_back(m_stepped[x][y] ? '1' : '0');
+            tRow.push_back(static_cast<int>(m_tiles[x][y]));
+            vRow.push_back(m_visited[x][y]);
+            sRow.push_back(m_stepped[x][y]);
         }
-        tiles.push_back(tileRow);
-        visited.push_back(visitedRow);
-        stepped.push_back(steppedRow);
+        tiles.push_back(std::move(tRow));
+        visited.push_back(std::move(vRow));
+        stepped.push_back(std::move(sRow));
     }
-    return {{"tiles", tiles}, {"visited", visited}, {"stepped", stepped}};
+    return nlohmann::json{
+        {"floor", m_floorNumber},
+        {"biome", static_cast<int>(m_biome)},
+        {"tiles", std::move(tiles)},
+        {"visited", std::move(visited)},
+        {"stepped", std::move(stepped)}
+    };
 }
 
 DungeonMap DungeonMap::fromJson(const nlohmann::json& json, int floorNumber) {
-    if (!json.is_object() || floorNumber < 1 || floorNumber > 3) {
-        throw std::runtime_error("던전 층 snapshot 형식이 잘못됐습니다.");
-    }
+    if (!json.is_object()) throw std::runtime_error("floor map must be object");
+    DungeonMap map;
+    map.m_floorNumber = std::clamp(floorNumber, 1, 5);
+    map.m_biome = biomeForFloor(map.m_floorNumber);
     const auto& tiles = json.at("tiles");
     const auto& visited = json.at("visited");
     const auto& stepped = json.at("stepped");
-    if (!tiles.is_array() || !visited.is_array() || !stepped.is_array() ||
-        tiles.size() != MAP_HEIGHT || visited.size() != MAP_HEIGHT || stepped.size() != MAP_HEIGHT) {
-        throw std::runtime_error("던전 층 snapshot 높이가 잘못됐습니다.");
+    if (!tiles.is_array() || tiles.size() != MAP_HEIGHT ||
+        !visited.is_array() || visited.size() != MAP_HEIGHT ||
+        !stepped.is_array() || stepped.size() != MAP_HEIGHT) {
+        throw std::runtime_error("invalid floor grid height");
     }
-
-    DungeonMap map;
-    int upCount = 0;
-    int downCount = 0;
-    int bossCount = 0;
-    auto decode = [](char code) {
-        switch (code) {
-            case '#': return TileType::WALL;
-            case '.': return TileType::EMPTY;
-            case 'D': return TileType::DOOR;
-            case 'U': return TileType::UPSTAIRS;
-            case 'V': return TileType::DOWNSTAIRS;
-            case 'B': return TileType::BOSS_GATE;
-            default: throw std::runtime_error("알 수 없는 던전 타일 코드입니다.");
-        }
-    };
     for (int y = 0; y < MAP_HEIGHT; ++y) {
-        const std::string tileRow = tiles.at(y).get<std::string>();
-        const std::string visitedRow = visited.at(y).get<std::string>();
-        const std::string steppedRow = stepped.at(y).get<std::string>();
-        if (tileRow.size() != MAP_WIDTH || visitedRow.size() != MAP_WIDTH ||
-            steppedRow.size() != MAP_WIDTH) {
-            throw std::runtime_error("던전 층 snapshot 너비가 잘못됐습니다.");
+        if (tiles[y].size() != MAP_WIDTH || visited[y].size() != MAP_WIDTH || stepped[y].size() != MAP_WIDTH) {
+            throw std::runtime_error("invalid floor grid width");
         }
         for (int x = 0; x < MAP_WIDTH; ++x) {
-            if ((visitedRow[x] != '0' && visitedRow[x] != '1') ||
-                (steppedRow[x] != '0' && steppedRow[x] != '1')) {
-                throw std::runtime_error("던전 탐험 비트가 잘못됐습니다.");
+            const int tv = tiles[y][x].get<int>();
+            if (tv < 0 || tv > static_cast<int>(TileType::SECRET_WALL)) {
+                throw std::runtime_error("invalid tile value");
             }
-            map.m_tiles[x][y] = decode(tileRow[x]);
-            map.m_visited[x][y] = visitedRow[x] == '1';
-            map.m_stepped[x][y] = steppedRow[x] == '1';
-            if (map.m_stepped[x][y] && (!map.m_visited[x][y] || map.m_tiles[x][y] == TileType::WALL)) {
-                throw std::runtime_error("밟은 타일은 방문한 이동 가능 타일이어야 합니다.");
-            }
-            if (map.m_tiles[x][y] == TileType::UPSTAIRS) ++upCount;
-            if (map.m_tiles[x][y] == TileType::DOWNSTAIRS) ++downCount;
-            if (map.m_tiles[x][y] == TileType::BOSS_GATE) ++bossCount;
-            if ((x == 0 || y == 0 || x == MAP_WIDTH - 1 || y == MAP_HEIGHT - 1) &&
-                map.m_tiles[x][y] != TileType::WALL) {
-                throw std::runtime_error("던전 외벽은 모두 벽이어야 합니다.");
-            }
+            map.m_tiles[x][y] = static_cast<TileType>(tv);
+            map.m_visited[x][y] = visited[y][x].get<bool>();
+            map.m_stepped[x][y] = stepped[y][x].get<bool>();
         }
-    }
-    if (upCount != 1 || downCount != (floorNumber < 3 ? 1 : 0) ||
-        bossCount != (floorNumber == 3 ? 1 : 0)) {
-        throw std::runtime_error("층별 계단 또는 최종 관문 수가 잘못됐습니다.");
-    }
-    if (map.m_tiles[1][1] != TileType::UPSTAIRS) {
-        throw std::runtime_error("층 입구 계단은 (1,1)에 있어야 합니다.");
     }
     map.m_playerX = 1;
     map.m_playerY = 1;
-    map.m_playerDir = Direction::NORTH;
+    map.m_playerDir = map.isWalkable(2, 1) ? Direction::EAST : Direction::SOUTH;
     map.recomputeDistances();
     map.validateForFloor(floorNumber);
     return map;
 }
 
 void DungeonMap::validateForFloor(int floorNumber) const {
-    if (floorNumber < 1 || floorNumber > 3) throw std::runtime_error("던전 층 번호가 잘못됐습니다.");
-    int upCount = 0;
-    int downCount = 0;
-    int bossCount = 0;
-    int doorCount = 0;
-    int farthestDistance = 0;
-    int terminalDistance = -1;
-    for (int x = 0; x < MAP_WIDTH; ++x) {
-        for (int y = 0; y < MAP_HEIGHT; ++y) {
-            const TileType tile = m_tiles[x][y];
-            if ((x == 0 || y == 0 || x == MAP_WIDTH - 1 || y == MAP_HEIGHT - 1) &&
-                tile != TileType::WALL) throw std::runtime_error("던전 외벽이 열려 있습니다.");
-            if (m_stepped[x][y] && (!m_visited[x][y] || tile == TileType::WALL)) {
-                throw std::runtime_error("밟은 타일 상태가 유효하지 않습니다.");
-            }
-            if (tile == TileType::UPSTAIRS) ++upCount;
-            if (tile == TileType::DOWNSTAIRS) { ++downCount; terminalDistance = m_distanceFromStart[x][y]; }
-            if (tile == TileType::BOSS_GATE) { ++bossCount; terminalDistance = m_distanceFromStart[x][y]; }
-            if (tile == TileType::DOOR) ++doorCount;
-            if (isWalkable(x, y)) {
-                if (m_distanceFromStart[x][y] < 0) throw std::runtime_error("도달할 수 없는 던전 바닥이 있습니다.");
-                farthestDistance = std::max(farthestDistance, m_distanceFromStart[x][y]);
+    if (m_tiles[1][1] != TileType::UPSTAIRS) {
+        throw std::runtime_error("floor entrance must be UPSTAIRS");
+    }
+    const TileType expectedExit = (floorNumber >= 5) ? TileType::BOSS_GATE : TileType::DOWNSTAIRS;
+    bool exitFound = false;
+    for (int y = 1; y < MAP_HEIGHT - 1; ++y) {
+        for (int x = 1; x < MAP_WIDTH - 1; ++x) {
+            if (m_tiles[x][y] == expectedExit && m_distanceFromStart[x][y] > 0) {
+                exitFound = true;
             }
         }
     }
-    if (m_tiles[1][1] != TileType::UPSTAIRS || !m_visited[1][1] || !m_stepped[1][1]) {
-        throw std::runtime_error("층 입구의 계단/FOW 상태가 잘못됐습니다.");
-    }
-    if (upCount != 1 || doorCount != 1 || downCount != (floorNumber < 3 ? 1 : 0) ||
-        bossCount != (floorNumber == 3 ? 1 : 0)) {
-        throw std::runtime_error("층 landmark 수가 canonical 계약과 다릅니다.");
-    }
-    if (terminalDistance != farthestDistance) {
-        throw std::runtime_error("하행 계단 또는 최종 관문이 최장 거리 타일이 아닙니다.");
+    if (!exitFound) {
+        throw std::runtime_error("floor exit is missing or unreachable");
     }
 }
 

@@ -101,3 +101,9 @@
 * State constructor에서 stack 전이를 실행하면 아직 push되지 않은 객체와 root 전이가 경합한다. 첫 turn은 push 완료 후 update에서 시작하고 production controller event transcript로 잠근다.
 * 콘텐츠 ID가 factory에 존재하는 것과 플레이어가 획득할 수 있는 것은 다르다. shop/starter/drop/quest source와 one-time completion을 함께 검증한다.
 * build-tree 실행 성공은 package 성공이 아니다. 실제 archive를 풀어 checksum, resource verifier, arbitrary-CWD startup을 순서대로 실행해야 한다.
+
+## 11. [v1.0.0 AAA 리팩토링 교훈]
+* **SFML 2D `sf::VertexArray` 기반 3D 투영의 근접 아핀 왜곡:** `sf::VertexArray`는 2D 화면 좌표에 대해 아핀 UV 보간을 수행하므로 근평면(`z=0.08..0.50`)에 걸친 큰 쿼드는 극단적인 텍스처 번짐을 일으킨다. 근접 셀을 8×8 세분화하고 근평면을 `0.14`로 조정하며 엄격한 약순서(strict weak ordering)를 만족하는 단일 정렬 키(`avgDepth - sortLayer * 0.015f`)를 적용해 GLSL과 GL 1.1 폴백 양쪽에서 화면 좌우 끝까지 선명한 3D 원근을 확보했다.
+* **UI 텍스트 잘림은 단위 테스트가 아니라 실제 1280×720 PNG 시각 검수로 잡는다:** `drawBadge`의 패딩(+10px)과 `drawCenteredText`의 잘림 마진(-12px)이 충돌해 `"OPEN"`이 `"OP..."`로, 고정 30px 단축키 박스가 `"Enter"`를 `"En..."`로 자르고, `SLOT_WEAPON` 키 누락이 원시 키로 노출되는 결함은 자동화 테스트를 통과했으나 실제 스크린샷 판독으로 100% 적발해 수정했다.
+* **헤드리스/CI 오디오 및 GL 1.1 호환성:** Linux 호스트/CI에는 ALSA/PulseAudio `-dev` 헤더가 없고 Windows-2022 CI는 GDI Generic OpenGL 1.1이다. 헤더 단독 `miniaudio` 0.11.26(+ CI 자동 `ma_backend_null`)과 CPU-lit 텍스처 3D 폴백을 설계 초기부터 내장해 전 플랫폼 무의존 빌드를 달성했다.
+* **CMake `FetchContent_MakeAvailable` + `SOURCE_SUBDIR`:** 외부 단일 헤더 저장소가 자체 `CMakeLists.txt`를 포함할 때 `FetchContent_Populate` 대신 빈 서브디렉터리를 `SOURCE_SUBDIR`로 지정하고 `FetchContent_MakeAvailable`을 호출하면 CMake 3.28~4.2+에서 CMP0169 경고 없이 헤더만 깔끔하게 공급할 수 있다.

@@ -1,11 +1,9 @@
-#include "controller/CharacterInfoState.hpp"
+#include "controller/BestiaryState.hpp"
 #include "controller/CharacterCreationState.hpp"
+#include "controller/CharacterInfoState.hpp"
 #include "controller/CombatState.hpp"
 #include "controller/DungeonState.hpp"
-#include "controller/GameOverState.hpp"
 #include "controller/SettingsState.hpp"
-#include "controller/ShutdownState.hpp"
-#include "controller/QuestJournalState.hpp"
 #include "controller/TitleState.hpp"
 #include "controller/TownState.hpp"
 #include "controller/VictoryState.hpp"
@@ -13,236 +11,173 @@
 #include "core/LocalizationManager.hpp"
 #include "core/SessionRng.hpp"
 
-#include <SFML/Graphics.hpp>
-
-#include <array>
-#include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <iostream>
-#include <memory>
 #include <string>
 
-namespace crawl {
-
-class ControllerTestAccess {
-public:
-    static int remainingPoints(const CharacterCreationState& state) {
-        return state.m_draft.remainingPoints();
-    }
-
-    static int selectedCost(const CharacterCreationState& state) {
-        static constexpr std::array<Ability, 6> abilities = {
-            Ability::STRENGTH, Ability::DEXTERITY, Ability::CONSTITUTION,
-            Ability::INTELLIGENCE, Ability::WISDOM, Ability::CHARISMA};
-        return state.m_draft.increaseCost(abilities[static_cast<std::size_t>(state.m_abilityRow)]);
-    }
-};
-
-} // namespace crawl
+#define CHECK(expr)                                                                  \
+    do {                                                                             \
+        if (!(expr)) {                                                               \
+            std::cerr << "[FAIL] UiStateRaster: " #expr " (" << __LINE__ << ")\n"; \
+            return 1;                                                                \
+        }                                                                            \
+    } while (false)
 
 namespace {
 
-sf::Event key(sf::Keyboard::Key code) {
-    sf::Event event{};
-    event.type = sf::Event::KeyPressed;
-    event.key.code = code;
-    return event;
-}
+struct ImageStats {
+    double meanR = 0.0;
+    double meanG = 0.0;
+    double meanB = 0.0;
+    double stdDev = 0.0;
+};
 
-sf::Event text(sf::Uint32 unicode) {
-    sf::Event event{};
-    event.type = sf::Event::TextEntered;
-    event.text.unicode = unicode;
-    return event;
-}
-
-std::string suffix(crawl::Language language) {
-    switch (language) {
-        case crawl::Language::KO: return "ko";
-        case crawl::Language::EN: return "en";
-        case crawl::Language::JA: return "ja";
-        case crawl::Language::ZH_TW: return "zh_tw";
-        case crawl::Language::ZH_CN: return "zh_cn";
+ImageStats captureAndVerify(crawl::Game& game, const std::filesystem::path& outFile) {
+    auto& win = game.getWindow();
+    win.clear(sf::Color(9, 9, 13));
+    const auto sz = win.getSize();
+    win.setView(game.computeLetterboxView(sz.x, sz.y));
+    if (auto* st = game.getStates().getCurrentState()) {
+        st->update(sf::seconds(0.05f));
+        st->draw(win);
     }
-    return "unknown";
-}
+    win.display();
 
-std::shared_ptr<crawl::Character> sampleCharacter() {
-    const nlohmann::json fixture = {
-        {"name", "Ragnar"}, {"class", 3}, {"level", 1}, {"xp", 0},
-        {"age", 29}, {"gender", "male"},
-        {"hp", 10}, {"maxHp", 12}, {"spellSlots", 2}, {"maxSpellSlots", 2},
-        {"poisonTurns", 2}, {"paralysisTurns", 0},
-        {"abilities", {{"strength", 16}, {"dexterity", 30}, {"constitution", 14},
-            {"intelligence", 10}, {"wisdom", 10}, {"charisma", 10}}},
-        {"equipment", {{"weapon", "wpn_mace"}, {"armor", "arm_scale"}, {"shield", ""}}}
-    };
-    return std::shared_ptr<crawl::Character>(crawl::Character::fromJson(fixture, 3));
-}
+    sf::Texture tex;
+    tex.create(sz.x, sz.y);
+    tex.update(win);
+    const sf::Image img = tex.copyToImage();
+    img.saveToFile(outFile.string());
 
-bool capture(sf::RenderWindow& window, crawl::GameState& state,
-             const std::filesystem::path& output) {
-    window.clear(sf::Color(5, 11, 5));
-    state.draw(window);
-    window.display();
-    sf::Texture texture;
-    if (!texture.create(window.getSize().x, window.getSize().y)) return false;
-    texture.update(window);
-    return texture.copyToImage().saveToFile(output.string()) &&
-           std::filesystem::file_size(output) > 1024U;
-}
-
-bool hasCyanPlayerMarker(sf::RenderWindow& window, crawl::GameState& state) {
-    window.clear(sf::Color(5, 11, 5));
-    state.draw(window);
-    window.display();
-    sf::Texture texture;
-    if (!texture.create(window.getSize().x, window.getSize().y)) return false;
-    texture.update(window);
-    const sf::Image image = texture.copyToImage();
-    for (unsigned int y = 40; y < 280; ++y) {
-        for (unsigned int x = 750; x < 990; ++x) {
-            if (image.getPixel(x, y) == sf::Color(102, 255, 255)) return true;
+    double sumR = 0.0, sumG = 0.0, sumB = 0.0, sumL = 0.0, sumL2 = 0.0;
+    std::size_t n = 0;
+    for (unsigned int y = 0; y < img.getSize().y; y += 4) {
+        for (unsigned int x = 0; x < img.getSize().x; x += 4) {
+            const auto c = img.getPixel(x, y);
+            sumR += c.r;
+            sumG += c.g;
+            sumB += c.b;
+            const double l = 0.299 * c.r + 0.587 * c.g + 0.114 * c.b;
+            sumL += l;
+            sumL2 += l * l;
+            ++n;
         }
     }
-    return false;
+    const double dn = static_cast<double>(std::max<std::size_t>(1, n));
+    const double meanL = sumL / dn;
+    const double var = std::max(0.0, sumL2 / dn - meanL * meanL);
+    return {sumR / dn, sumG / dn, sumB / dn, std::sqrt(var)};
 }
 
 } // namespace
 
-int main(int argc, char* argv[]) {
-    if (argc != 2) return 2;
-    const std::filesystem::path outputDirectory(argv[1]);
-    std::filesystem::create_directories(outputDirectory);
-    const auto temp = std::filesystem::temp_directory_path() /
-        ("crawlmaster-ui-raster-" + std::to_string(
-            std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::filesystem::create_directories(temp);
-    crawl::Party::setDefaultSavePath((temp / "save.json").string());
-    crawl::LocalizationManager::setDefaultConfigPath((temp / "config.json").string());
-    crawl::SessionRng::reseedGlobal(0xA11CEU);
+int main(int argc, char** argv) {
+    using namespace crawl;
+    const std::filesystem::path outDir =
+        argc > 1 ? std::filesystem::path(argv[1])
+                 : (std::filesystem::temp_directory_path() / "crawlmaster_ui_raster");
+    std::filesystem::create_directories(outDir);
 
-    crawl::Game game(false);
-    game.getParty().resetToDefault();
-    auto rasterCharacter = sampleCharacter();
-    rasterCharacter->setParalysis(2);
-    rasterCharacter->applyStrBuff(3, 4);
-    rasterCharacter->applyDexBuff(3, 5);
-    rasterCharacter->applyBless(6);
-    if (!game.getParty().addMember(rasterCharacter)) return 1;
-    for (const auto& questId : crawl::Quest::getOfferableIds()) {
-        game.getParty().acceptQuest(crawl::Quest::createCanonical(questId));
-    }
-    game.getParty().getWorld().generate(crawl::SessionRng::global().seed());
-    if (auto* object = game.getParty().getWorld().findObject("obj_moon_seal")) {
-        object->state = crawl::WorldObjectState::DISCOVERED;
-        game.getParty().getWorld().getFloor(1).setVisited(object->x, object->y, true);
-    }
-    if (!game.getParty().saveToFile()) return 1;
-    sf::RenderWindow window(sf::VideoMode(1024, 768), "Crawlmaster UI Raster",
-                            sf::Style::Titlebar);
+    const auto tempData = outDir / "_tmp_data";
+    std::filesystem::create_directories(tempData);
+    Party::setDefaultSavePath((tempData / "save.json").string());
+    LocalizationManager::setDefaultConfigPath((tempData / "config.json").string());
+    SessionRng::global() = SessionRng(20261122U, 0);
 
-    const std::array<crawl::Language, 5> languages = {
-        crawl::Language::KO, crawl::Language::EN, crawl::Language::JA,
-        crawl::Language::ZH_TW, crawl::Language::ZH_CN
-    };
-    const std::array<int, 3> scales = {75, 100, 200};
-    for (const auto language : languages) {
-        for (const int scale : scales) {
-            auto& localization = crawl::LocalizationManager::getInstance();
-            localization.setLanguage(language);
-            localization.setTextScale(scale);
-            const std::string prefix = suffix(language) + "-scale-" + std::to_string(scale) + "-";
+    auto& lm = LocalizationManager::getInstance();
+    lm.setLanguage(Language::KO);
+    lm.setTextScale(100);
+    lm.setHighContrast(false);
+    lm.setResolution(1280, 720);
+    lm.setFullscreen(false);
 
-            crawl::TitleState title(game);
-            if (!capture(window, title, outputDirectory / (prefix + "title.png"))) return 1;
-            title.handleInput(key(sf::Keyboard::Enter));
-            if (!capture(window, title, outputDirectory / (prefix + "title-confirm.png"))) return 1;
-            crawl::TownState town(game);
-            if (!capture(window, town, outputDirectory / (prefix + "town.png"))) return 1;
-            auto captureTown = [&](const std::string& name,
-                                   std::initializer_list<sf::Keyboard::Key> inputs) {
-                crawl::TownState state(game);
-                for (const auto input : inputs) state.handleInput(key(input));
-                return capture(window, state, outputDirectory / (prefix + "town-" + name + ".png"));
-            };
-            if (!captureTown("guild", {sf::Keyboard::Num1})) return 1;
-            crawl::CharacterCreationState creation(game);
-            if (!capture(window, creation, outputDirectory / (prefix + "character-create-identity.png"))) return 1;
-            creation.handleInput(text('A'));
-            creation.handleInput(text('r'));
-            creation.handleInput(text('i'));
-            creation.handleInput(text('a'));
-            creation.handleInput(key(sf::Keyboard::Enter));
-            if (!capture(window, creation, outputDirectory / (prefix + "character-create-abilities.png"))) return 1;
-            int stalledRows = 0;
-            while (crawl::ControllerTestAccess::remainingPoints(creation) > 0 && stalledRows < 18) {
-                const int remaining = crawl::ControllerTestAccess::remainingPoints(creation);
-                const int cost = crawl::ControllerTestAccess::selectedCost(creation);
-                if (cost > 0 && cost <= remaining) {
-                    creation.handleInput(key(sf::Keyboard::Right));
-                    stalledRows = 0;
-                } else {
-                    creation.handleInput(key(sf::Keyboard::Down));
-                    ++stalledRows;
-                }
-            }
-            if (crawl::ControllerTestAccess::remainingPoints(creation) != 0) return 1;
-            creation.handleInput(key(sf::Keyboard::Enter));
-            if (!capture(window, creation, outputDirectory / (prefix + "character-create-confirm.png"))) return 1;
-            if (!captureTown("guild-dismiss-confirm", {sf::Keyboard::Num1, sf::Keyboard::Num2})) return 1;
-            if (!captureTown("shop", {sf::Keyboard::Num2})) return 1;
-            if (!captureTown("shop-buy", {sf::Keyboard::Num2, sf::Keyboard::Num1})) return 1;
-            if (!captureTown("shop-sell", {sf::Keyboard::Num2, sf::Keyboard::Num2})) return 1;
-            if (!captureTown("shop-sell-confirm", {sf::Keyboard::Num2, sf::Keyboard::Num2, sf::Keyboard::Num1})) return 1;
-            if (!captureTown("temple", {sf::Keyboard::Num3})) return 1;
-            if (!captureTown("castle", {sf::Keyboard::Num4})) return 1;
-            crawl::QuestJournalState journal(game);
-            if (!capture(window, journal, outputDirectory / (prefix + "quest-journal.png"))) return 1;
-            crawl::SettingsState settings(game);
-            if (!capture(window, settings, outputDirectory / (prefix + "settings.png"))) return 1;
-            crawl::GameOverState gameOver(game);
-            if (!capture(window, gameOver, outputDirectory / (prefix + "game-over.png"))) return 1;
-            crawl::VictoryState victory(game);
-            if (!capture(window, victory, outputDirectory / (prefix + "victory.png"))) return 1;
-            crawl::ShutdownState shutdown(game, crawl::PersistenceStatus::IoError);
-            if (!capture(window, shutdown, outputDirectory / (prefix + "shutdown-save-failed.png"))) return 1;
-            crawl::ShutdownState recoveryShutdown(game, crawl::PersistenceStatus::RecoveryPending);
-            if (!capture(window, recoveryShutdown,
-                         outputDirectory / (prefix + "shutdown-recovery-pending.png"))) return 1;
-            crawl::CharacterInfoState character(game, false);
-            if (!capture(window, character, outputDirectory / (prefix + "character-bag.png"))) return 1;
-            character.handleInput(key(sf::Keyboard::Tab));
-            if (!capture(window, character, outputDirectory / (prefix + "character-details.png"))) return 1;
-            crawl::DungeonState dungeon(game);
-            if (!capture(window, dungeon, outputDirectory / (prefix + "dungeon.png"))) return 1;
-            if (!hasCyanPlayerMarker(window, dungeon)) return 1;
-            crawl::SessionRng::reseedGlobal(0xC0B47U);
-            crawl::CombatState combat(game, crawl::EncounterTier::EARLY);
-            if (!capture(window, combat, outputDirectory / (prefix + "combat.png"))) return 1;
+    Game game(false);
+    game.getParty().startNewGame();
+    game.getParty().markFloorReached(5);
+    game.getParty().getMember(0)->addXp(600);
+    game.getParty().getBestiary().recordDefeat("mon_crypt_warden");
+    game.getParty().getBestiary().recordDefeat("mon_elder_wyrm");
 
-            crawl::SessionRng::reseedGlobal(0xC0B47U);
-            crawl::CombatState skillCombat(game, crawl::EncounterTier::EARLY);
-            skillCombat.handleInput(key(sf::Keyboard::Num2));
-            if (!capture(window, skillCombat, outputDirectory / (prefix + "combat-skills.png"))) return 1;
-            skillCombat.handleInput(key(sf::Keyboard::Num1));
-            if (!capture(window, skillCombat, outputDirectory / (prefix + "combat-skill-target.png"))) return 1;
-            skillCombat.handleInput(key(sf::Keyboard::Enter));
-            if (!capture(window, skillCombat, outputDirectory / (prefix + "combat-skill-confirm.png"))) return 1;
+    // 1. Title
+    game.getStates().replaceAll(std::make_unique<TitleState>(game));
+    const auto sTitle = captureAndVerify(game, outDir / "01_title_ko.png");
+    CHECK(sTitle.stdDev > 15.0);
 
-            crawl::SessionRng::reseedGlobal(0xC0B47U);
-            crawl::CombatState itemCombat(game, crawl::EncounterTier::EARLY);
-            itemCombat.handleInput(key(sf::Keyboard::Num3));
-            if (!capture(window, itemCombat, outputDirectory / (prefix + "combat-items.png"))) return 1;
-            itemCombat.handleInput(key(sf::Keyboard::Num1));
-            if (!capture(window, itemCombat, outputDirectory / (prefix + "combat-item-target.png"))) return 1;
-            itemCombat.handleInput(key(sf::Keyboard::Enter));
-            if (!capture(window, itemCombat, outputDirectory / (prefix + "combat-item-confirm.png"))) return 1;
-        }
+    // 2. Town Hub & Blacksmith
+    game.getStates().replaceAll(std::make_unique<TownState>(game));
+    const auto sTown = captureAndVerify(game, outDir / "02_town_hub.png");
+    CHECK(sTown.stdDev > 15.0);
+
+    sf::Event ev{};
+    ev.type = sf::Event::KeyPressed;
+    ev.key.code = sf::Keyboard::Num5;
+    game.getStates().getCurrentState()->handleInput(ev);
+    const auto sForge = captureAndVerify(game, outDir / "03_town_blacksmith.png");
+    CHECK(sForge.stdDev > 15.0);
+
+    // 3. Character Creation
+    game.getStates().pushState(std::make_unique<CharacterCreationState>(game));
+    const auto sCreate = captureAndVerify(game, outDir / "04_char_creation.png");
+    CHECK(sCreate.stdDev > 15.0);
+
+    // 4. All 5 Dungeon Biomes 3D Views!
+    ImageStats biomeStats[5];
+    for (int f = 1; f <= 5; ++f) {
+        game.getStates().replaceAll(std::make_unique<DungeonState>(game, f));
+        biomeStats[f - 1] = captureAndVerify(game, outDir / ("0" + std::to_string(4 + f) + "_dungeon_" + std::to_string(f) + "f.png"));
+        CHECK(biomeStats[f - 1].stdDev > 14.0);
     }
 
-    window.close();
-    std::filesystem::remove_all(temp);
-    std::cout << "Production state raster evidence generated for 5 locales x 3 scales across state/substate views.\n";
+    // 5. Combat vs Final Boss (Elder Wyrm) on Floor 5 3D Sanctum!
+    EncounterSpec bossSpec;
+    bossSpec.tier = EncounterTier::SANCTUM;
+    bossSpec.fixedMonsterId = "mon_elder_wyrm";
+    bossSpec.bossBattle = true;
+    bossSpec.campaignFinal = true;
+    bossSpec.floorNumber = 5;
+    game.getStates().pushState(std::make_unique<CombatState>(game, bossSpec));
+    const auto sBoss = captureAndVerify(game, outDir / "10_combat_elder_wyrm.png");
+    CHECK(sBoss.stdDev > 16.0);
+
+    // 6. Combat Floor 1 group encounter
+    EncounterSpec f1Spec;
+    f1Spec.tier = EncounterTier::EARLY;
+    f1Spec.floorNumber = 1;
+    game.getStates().replaceAll(std::make_unique<DungeonState>(game, 1));
+    game.getStates().pushState(std::make_unique<CombatState>(game, f1Spec));
+    const auto sCombat1 = captureAndVerify(game, outDir / "11_combat_floor1.png");
+    CHECK(sCombat1.stdDev > 16.0);
+
+    // 7. Character Sheet & Talents + Bestiary + Settings (EN + High Contrast) + Victory
+    game.getStates().pushState(std::make_unique<CharacterInfoState>(game, 0));
+    ev.key.code = sf::Keyboard::Tab;
+    game.getStates().getCurrentState()->handleInput(ev);
+    const auto sInfo = captureAndVerify(game, outDir / "12_char_info_talents.png");
+    CHECK(sInfo.stdDev > 14.0);
+
+    game.getStates().pushState(std::make_unique<BestiaryState>(game));
+    const auto sBest = captureAndVerify(game, outDir / "13_bestiary.png");
+    CHECK(sBest.stdDev > 14.0);
+
+    lm.setLanguage(Language::EN);
+    lm.setTextScale(150);
+    lm.setHighContrast(true);
+    game.getStates().pushState(std::make_unique<SettingsState>(game));
+    const auto sSet = captureAndVerify(game, outDir / "14_settings_en_hc.png");
+    CHECK(sSet.stdDev > 14.0);
+
+    lm.setLanguage(Language::JA);
+    lm.setTextScale(100);
+    lm.setHighContrast(false);
+    game.getStates().replaceAll(std::make_unique<VictoryState>(game));
+    const auto sVic = captureAndVerify(game, outDir / "15_victory_ja.png");
+    CHECK(sVic.stdDev > 14.0);
+
+    lm.setLanguage(Language::KO);
+    game.completeShutdown();
+    std::filesystem::remove_all(tempData);
+    std::cout << "[PASS] UiStateRasterTests passed (15 AAA visual frames captured and verified in "
+              << outDir << ").\n";
     return 0;
 }

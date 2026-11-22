@@ -1,60 +1,96 @@
-// [v0.2.0] DungeonRenderer.hpp 신규 작성
-// 1인칭 와이어프레임 3D 뷰포트, 미니맵, HUD 윈도우 프레임 및 로그를 그리는 SFML 렌더러 헤더 선언.
-
 #ifndef DUNGEON_RENDERER_HPP
 #define DUNGEON_RENDERER_HPP
 
 #include <SFML/Graphics.hpp>
-#include <vector>
-#include <string>
 #include "model/DungeonWorld.hpp"
+#include "view/PartyHudSnapshot.hpp"
+
+#include <array>
+#include <string>
+#include <vector>
 
 namespace crawl {
 
-class DungeonMap; // 전방 선언
-class Game;       // 전방 선언
+class Game;
+class DungeonMap;
 class Party;
-class PartyHudSnapshot;
 
-// DungeonRenderer 클래스: 던전 상태에서의 모든 2D/3D 드로잉 연산 수행
+struct DungeonHudInteraction {
+    sf::FloatRect minimapRect;
+    sf::FloatRect fullMapGridRect;
+    sf::FloatRect interactBannerRect;
+    std::array<sf::FloatRect, 4> portraitRects{};
+    std::array<sf::FloatRect, 5> dockRects{}; // Party, Quests, Bestiary, Map, Settings
+    bool fullMapOpen = false;
+    bool canInteract = false;
+    std::string interactPrompt;
+    sf::Vector2f mousePos{-1000.0f, -1000.0f};
+};
+
 class DungeonRenderer {
 public:
     explicit DungeonRenderer(Game& game);
     ~DungeonRenderer() = default;
 
-    // 던전 뷰포트 전체 그리기 (와이어프레임, 미니맵, 인터페이스 로그)
+    // 60fps 카메라 보간·헤드밥·횃불 흔들림·파티클 업데이트
+    void syncCameraImmediate(const DungeonMap& map);
+    void notifyStep(bool bumped = false);
+    void triggerDamageFlash(float intensity = 0.7f);
+    void update(float dt, const DungeonMap& map);
+
+    // 전체 1인칭 3D 던전 + AAA HUD + 선택적 전체 지도 오버레이 렌더링
     void render(sf::RenderWindow& window, const DungeonMap& map, const Party& party,
                 const std::vector<std::string>& logQueue, int floorNumber,
-                const std::vector<WorldObject>& objects);
+                const std::vector<WorldObject>& objects,
+                DungeonHudInteraction& outUi);
+
+    // 전투 화면 배경용 3D 바이옴 복도 렌더링 (살짝 어둡게 처리)
+    void renderCombatBackdrop(sf::RenderTarget& target, const DungeonMap& map,
+                              float elapsedTime, float damageFlash = 0.0f);
 
 private:
-    Game& m_game;                       // 전역 Game 참조 (폰트 정보 획득용)
-    
-    // 뷰포트 상수 정의 (700x500 뷰포트, 마진 (20, 20))
-    const float VIEWPORT_X = 20.0f;
-    const float VIEWPORT_Y = 20.0f;
-    const float VIEWPORT_W = 700.0f;
-    const float VIEWPORT_H = 500.0f;
-    const float CX = 370.0f;            // 뷰포트 가로 중심 (20 + 350)
-    const float CY = 270.0f;            // 뷰포트 세로 중심 (20 + 250)
+    struct DustMote {
+        float x = 0.0f;
+        float y = 0.0f;
+        float vx = 0.0f;
+        float vy = 0.0f;
+        float size = 4.0f;
+        float phase = 0.0f;
+    };
 
-    // 원근 투영 높이 및 폭 테이블 (d = 0, 1, 2, 3, 4)
-    // d=4는 d=3의 벽 끝 투영 처리를 위해 선언
-    const float H_TABLE[5] = { 480.0f, 320.0f, 200.0f, 100.0f, 50.0f };
-    const float W_TABLE[5] = { 600.0f, 400.0f, 240.0f, 120.0f, 60.0f };
+    void ensureOffscreenTarget(unsigned int width, unsigned int height);
+    void render3DScene(sf::RenderTarget& target, sf::FloatRect vp, const DungeonMap& map,
+                       int floorNumber, const std::vector<WorldObject>& objects,
+                       const Party* party, bool combatBackdropMode, float extraDamageFlash);
 
-    // 1인칭 3D 와이어프레임 벽 드로우 헬퍼
-    void draw3DViewport(sf::RenderWindow& window, const DungeonMap& map);
-    // 우측 미니맵(FOW 연동) 드로우 헬퍼
-    void drawMiniMap(sf::RenderWindow& window, const DungeonMap& map, const Party& party,
-                     int floorNumber, const std::vector<WorldObject>& objects);
-    // 하단 및 우측 HUD 사각형 프레임 드로우 헬퍼
-    void drawHUDFrame(sf::RenderWindow& window, const PartyHudSnapshot& partySnapshot);
-    // 최근 스크롤 로그 내용 드로우 헬퍼
-    void drawLogWindow(sf::RenderWindow& window, const std::vector<std::string>& logQueue);
+    void drawMiniMap(sf::RenderTarget& window, sf::FloatRect frameRect, const DungeonMap& map,
+                     const Party& party, int floorNumber, const std::vector<WorldObject>& objects);
+    void drawFullMapOverlay(sf::RenderTarget& window, const DungeonMap& map, const Party& party,
+                            int floorNumber, const std::vector<WorldObject>& objects,
+                            sf::FloatRect& outGridRect);
+    void drawPartyDock(sf::RenderTarget& window, const PartyHudSnapshot& snapshot,
+                       DungeonHudInteraction& ui);
+    void drawExplorationLog(sf::RenderTarget& window, sf::FloatRect rect,
+                            const std::vector<std::string>& logQueue);
 
-    // 단순 선 그리기 유틸리티
-    void drawLine(sf::RenderWindow& window, float x1, float y1, float x2, float y2, sf::Color color);
+    static float directionToYaw(Direction dir);
+
+    Game& m_game;
+    sf::RenderTexture m_sceneBuffer;
+    bool m_offscreenReady = false;
+
+    // 부드러운 3D 카메라 상태
+    float m_camX = 1.0f;
+    float m_camY = 1.0f;
+    float m_camYaw = 0.0f;
+    bool m_cameraInitialized = false;
+    float m_headBobPhase = 0.0f;
+    float m_headBobAmp = 0.0f;
+    float m_bumpTimer = 0.0f;
+    float m_damageFlash = 0.0f;
+    float m_time = 0.0f;
+
+    std::vector<DustMote> m_dust;
 };
 
 } // namespace crawl

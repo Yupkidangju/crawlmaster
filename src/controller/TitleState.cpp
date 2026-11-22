@@ -1,232 +1,267 @@
-// [v0.1.0] TitleState.cpp 신규 작성
-// [v0.9.0] 다국어 실시간 전환 지원, TUI 메뉴 인터페이스(시작/설정/종료) 및 SettingsState 연동 구현.
-
 #include "controller/TitleState.hpp"
-#include "controller/TownState.hpp"
 #include "controller/SettingsState.hpp"
+#include "controller/TownState.hpp"
 #include "controller/VictoryState.hpp"
+#include "core/AudioManager.hpp"
 #include "core/Game.hpp"
 #include "core/LocalizationManager.hpp"
 #include "core/SessionRng.hpp"
-#include <filesystem>
-#include <iostream>
+#include "view/UiSystem.hpp"
+#include "view/UiTheme.hpp"
+
+#include <cmath>
 
 namespace crawl {
 
-TitleState::TitleState(Game& game)
-    : m_game(game), m_showInstruction(true), m_selectedMenuIndex(0) {
-    initTexts();
+TitleState::TitleState(Game& game) : m_game(game) {
+    m_preview = Party::inspectSavePreview();
+    AudioManager::getInstance().stopAmbience();
+    AudioManager::getInstance().playBgm("bgm_title");
+}
+
+void TitleState::startConfirmedNewGame() {
+    const auto& lm = LocalizationManager::getInstance();
+    const PartyCheckpoint cp = m_game.getParty().captureCheckpoint();
+    SessionRng::startNewGlobalSession();
+    const auto res = m_game.getParty().startNewGame();
+    if (!res.durabilityConfirmed()) {
+        m_statusMessage = lm.get("TITLE_DURABILITY_UNKNOWN");
+        AudioManager::getInstance().playSfx("sfx_ui_error");
+        return;
+    }
+    if (!res) {
+        m_game.getParty().restoreCheckpoint(cp);
+        m_statusMessage = lm.get("TITLE_SAVE_ERROR");
+        AudioManager::getInstance().playSfx("sfx_ui_error");
+        return;
+    }
+    AudioManager::getInstance().playSfx("sfx_ui_click");
+    m_game.triggerFadeIn(0.28f);
+    m_game.getStates().replaceAll(std::make_unique<TownState>(m_game));
+}
+
+void TitleState::attemptContinue() {
+    const auto& lm = LocalizationManager::getInstance();
+    const bool recoveryContext = m_game.getParty().hasActiveSaveSession() || Party::hasRecoverableSave();
+    const auto res = m_game.getParty().loadFromFile();
+    if (res) {
+        const auto savedSeed = m_game.getParty().getLastSessionSeed();
+        if (savedSeed != 0U) {
+            SessionRng::global() = SessionRng(savedSeed, m_game.getParty().getSessionRngDrawCount());
+        } else {
+            SessionRng::startNewGlobalSession();
+        }
+        AudioManager::getInstance().playSfx("sfx_ui_click");
+        m_game.triggerFadeIn(0.28f);
+        if (m_game.getParty().isCampaignCompleted()) {
+            m_game.getStates().replaceAll(std::make_unique<VictoryState>(m_game));
+        } else {
+            m_game.getStates().replaceAll(std::make_unique<TownState>(m_game));
+        }
+        return;
+    }
+
+    AudioManager::getInstance().playSfx("sfx_ui_error");
+    if (res.status == PersistenceStatus::UnsupportedVersion) {
+        m_statusMessage = lm.get("TITLE_LEGACY_QUARANTINED");
+        m_preview = Party::inspectSavePreview();
+        return;
+    }
+    if (recoveryContext) m_game.getParty().markRecoveryPending();
+    m_statusMessage = lm.get(res.status == PersistenceStatus::NotFound
+                                 ? "TITLE_NO_SAVE" : "TITLE_CORRUPT_SAVE");
+}
+
+void TitleState::activateMenu(int index) {
+    if (index == 0) {
+        if (m_preview.valid) {
+            m_confirmingNewGame = true;
+            m_statusMessage = LocalizationManager::getInstance().get("TITLE_NEW_CONFIRM");
+            AudioManager::getInstance().playSfx("sfx_ui_click");
+        } else {
+            startConfirmedNewGame();
+        }
+    } else if (index == 1) {
+        attemptContinue();
+    } else if (index == 2) {
+        AudioManager::getInstance().playSfx("sfx_ui_click");
+        m_game.getStates().pushState(std::make_unique<SettingsState>(m_game));
+    } else if (index == 3) {
+        AudioManager::getInstance().playSfx("sfx_ui_click");
+        m_game.completeShutdown();
+    }
 }
 
 void TitleState::handleInput(const sf::Event& event) {
-    if (event.type == sf::Event::KeyPressed) {
-        switch (event.key.code) {
-            case sf::Keyboard::Up:
-                if (!m_confirmingNewGame) m_selectedMenuIndex = (m_selectedMenuIndex + 3) % 4;
-                break;
-            case sf::Keyboard::Down:
-                if (!m_confirmingNewGame) m_selectedMenuIndex = (m_selectedMenuIndex + 1) % 4;
-                break;
-            case sf::Keyboard::Escape:
-                if (m_confirmingNewGame) {
-                    m_confirmingNewGame = false;
-                    m_statusMessage.clear();
-                }
-                break;
-            case sf::Keyboard::O:
-                if (!m_confirmingNewGame) {
-                    m_game.getStates().pushState(std::make_unique<SettingsState>(m_game));
-                }
-                break;
-            case sf::Keyboard::Enter:
-                if (m_confirmingNewGame) {
-                    const PartyCheckpoint checkpoint = m_game.getParty().captureCheckpoint();
-                    SessionRng::startNewGlobalSession();
-                    auto saveResult = m_game.getParty().startNewGame();
-                    if (!saveResult.durabilityConfirmed()) {
-                        m_statusMessage = LocalizationManager::getInstance().get("TITLE_DURABILITY_UNKNOWN");
-                    } else if (saveResult) {
-                        m_game.getStates().replaceAll(std::make_unique<TownState>(m_game));
-                    } else {
-                        m_game.getParty().restoreCheckpoint(checkpoint);
-                        m_statusMessage = LocalizationManager::getInstance().get("TITLE_SAVE_ERROR");
-                    }
-                } else if (m_selectedMenuIndex == 0) {
-                    m_confirmingNewGame = true;
-                    m_statusMessage = LocalizationManager::getInstance().get("TITLE_NEW_CONFIRM");
-                } else if (m_selectedMenuIndex == 1) {
-                    const bool recoveryContext = m_game.getParty().hasActiveSaveSession() ||
-                                                 Party::hasRecoverableSave();
-                    auto loadResult = m_game.getParty().loadFromFile();
-                    if (loadResult) {
-                        const auto savedSeed = m_game.getParty().getLastSessionSeed();
-                        if (savedSeed == 0U) {
-                            SessionRng::startNewGlobalSession();
-                            const auto seedSaveResult = m_game.getParty().saveToFile();
-                            if (!seedSaveResult.durabilityConfirmed()) {
-                                m_statusMessage = LocalizationManager::getInstance().get("TITLE_DURABILITY_UNKNOWN");
-                                return;
-                            }
-                            if (!seedSaveResult) {
-                                m_statusMessage = LocalizationManager::getInstance().get("TITLE_SAVE_ERROR");
-                                return;
-                            }
-                        } else {
-                            SessionRng::global() = SessionRng(
-                                savedSeed, m_game.getParty().getSessionRngDrawCount());
-                        }
-                        if (m_game.getParty().needsSaveMigration()) {
-                            const auto migrationResult = m_game.getParty().saveToFile();
-                            if (!migrationResult.durabilityConfirmed()) {
-                                m_statusMessage = LocalizationManager::getInstance().get("TITLE_DURABILITY_UNKNOWN");
-                                return;
-                            }
-                            if (!migrationResult) {
-                                m_statusMessage = LocalizationManager::getInstance().get("TITLE_SAVE_ERROR");
-                                return;
-                            }
-                        }
-                        if (m_game.getParty().isCampaignCompleted()) {
-                            m_game.getStates().replaceAll(std::make_unique<VictoryState>(m_game));
-                        } else {
-                            m_game.getStates().replaceAll(std::make_unique<TownState>(m_game));
-                        }
-                    } else {
-                        if (recoveryContext) m_game.getParty().markRecoveryPending();
-                        m_statusMessage = LocalizationManager::getInstance().get(
-                            loadResult.status == PersistenceStatus::NotFound
-                                ? "TITLE_NO_SAVE" : "TITLE_CORRUPT_SAVE");
-                    }
-                } else if (m_selectedMenuIndex == 2) {
-                    std::cout << "[FSM] TitleState에서 SettingsState로 상태 진입(Push)을 요청합니다." << std::endl;
-                    m_game.getStates().pushState(std::make_unique<SettingsState>(m_game));
-                } else if (m_selectedMenuIndex == 3) {
-                    std::cout << "[FSM] 게임 종료를 위해 TitleState를 Pop 처리합니다." << std::endl;
-                    m_game.getStates().popState();
-                }
-                break;
-            default:
-                break;
+    if (event.type == sf::Event::MouseMoved) {
+        const auto pos = m_game.mapPixelToLogical({event.mouseMove.x, event.mouseMove.y});
+        int prevHover = m_hoveredMenuIndex;
+        m_hoveredMenuIndex = -1;
+        for (int i = 0; i < 4; ++i) {
+            if (m_buttonRects[static_cast<std::size_t>(i)].contains(pos)) {
+                m_hoveredMenuIndex = i;
+                m_selectedMenuIndex = i;
+            }
         }
+        if (m_hoveredMenuIndex != -1 && m_hoveredMenuIndex != prevHover) {
+            AudioManager::getInstance().playSfx("sfx_ui_hover");
+        }
+        return;
+    }
+
+    if (event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Left) {
+        const auto pos = m_game.mapPixelToLogical({event.mouseButton.x, event.mouseButton.y});
+        if (m_confirmingNewGame) {
+            if (m_confirmYesRect.contains(pos)) {
+                startConfirmedNewGame();
+            } else if (m_confirmNoRect.contains(pos)) {
+                m_confirmingNewGame = false;
+                m_statusMessage.clear();
+                AudioManager::getInstance().playSfx("sfx_ui_click");
+            }
+            return;
+        }
+        for (int i = 0; i < 4; ++i) {
+            if (m_buttonRects[static_cast<std::size_t>(i)].contains(pos)) {
+                m_selectedMenuIndex = i;
+                activateMenu(i);
+                return;
+            }
+        }
+        return;
+    }
+
+    if (event.type != sf::Event::KeyPressed) return;
+    const auto key = event.key.code;
+
+    if (m_confirmingNewGame) {
+        if (key == sf::Keyboard::Enter || key == sf::Keyboard::Y) {
+            startConfirmedNewGame();
+        } else if (key == sf::Keyboard::Escape || key == sf::Keyboard::N) {
+            m_confirmingNewGame = false;
+            m_statusMessage.clear();
+            AudioManager::getInstance().playSfx("sfx_ui_click");
+        }
+        return;
+    }
+
+    if (key == sf::Keyboard::Up || key == sf::Keyboard::W) {
+        m_selectedMenuIndex = (m_selectedMenuIndex + 3) % 4;
+        AudioManager::getInstance().playSfx("sfx_ui_hover");
+    } else if (key == sf::Keyboard::Down || key == sf::Keyboard::S) {
+        m_selectedMenuIndex = (m_selectedMenuIndex + 1) % 4;
+        AudioManager::getInstance().playSfx("sfx_ui_hover");
+    } else if (key == sf::Keyboard::O) {
+        activateMenu(2);
+    } else if (key == sf::Keyboard::Enter || key == sf::Keyboard::Space) {
+        activateMenu(m_selectedMenuIndex);
     }
 }
 
 void TitleState::update(sf::Time deltaTime) {
-    // 0.5초 주기로 안내 설명 문구가 깜빡이도록 타이머 로직 적용
-    m_blinkTimer += deltaTime;
-    if (m_blinkTimer >= sf::seconds(0.5f)) {
-        m_showInstruction = !m_showInstruction;
-        m_blinkTimer = sf::Time::Zero;
-    }
+    m_time += deltaTime.asSeconds();
+    m_preview = Party::inspectSavePreview();
 }
 
 void TitleState::draw(sf::RenderWindow& window) {
-    // [v0.9.4] 설정 화면에서 복귀할 때 현재 언어의 폰트를 지속 Text에 재바인딩한다.
-    const sf::Font& font = m_game.getFont();
-    m_logoText.setFont(font);
-    m_instructionText.setFont(font);
-    m_creditText.setFont(font);
-    m_statusText.setFont(font);
-    auto& lm = LocalizationManager::getInstance();
-    m_instructionText.setCharacterSize(lm.getScaledTextSize(14));
-    m_creditText.setCharacterSize(lm.getScaledTextSize(14));
-    m_statusText.setCharacterSize(lm.getScaledTextSize(16));
+    auto& assets = m_game.getAssets();
+    const auto& font = m_game.getFont();
+    const auto& lm = LocalizationManager::getInstance();
+    const auto mouse = m_game.getMouseLogicalPosition();
 
-    // 1. 아스키 아트 로고 그리기
-    window.draw(m_logoText);
-    
-    // 2. TUI 메뉴 그리기 (실시간 언어 변경 즉시 반영)
-    float menuY = 440.0f;
-    float menuSpacing = 35.0f;
-    
-    auto drawMenuItem = [&](const std::string& key, int idx) {
-        sf::Text text;
-        text.setFont(m_game.getFont());
-        std::string label = lm.get(key);
-        if (m_selectedMenuIndex == idx) {
-            label = "> " + label;
-            text.setFillColor(sf::Color(102, 255, 102)); // 강조 네온 그린
-        } else {
-            label = "  " + label;
-            text.setFillColor(sf::Color(130, 170, 130));
+    // 1. 풀스크린 다크 판타지 키아트 배경 + 부유 불씨 파티클
+    UiSystem::drawBackdrop(window, assets, "title_bg", 72);
+
+    if (const sf::Texture* glow = assets.getUiTexture("particle_glow")) {
+        const auto gsz = glow->getSize();
+        for (int i = 0; i < 24; ++i) {
+            const float phase = static_cast<float>(i) * 1.37f;
+            const float px = std::fmod(static_cast<float>(i * 73) + std::sin(m_time * 0.7f + phase) * 28.0f + 1280.0f, 1280.0f);
+            const float py = 740.0f - std::fmod(m_time * (28.0f + static_cast<float>(i % 5) * 8.0f) + static_cast<float>(i * 41), 760.0f);
+            const float pulse = 0.45f + 0.55f * std::sin(m_time * 3.0f + phase);
+            sf::Sprite sp(*glow);
+            sp.setOrigin(static_cast<float>(gsz.x) * 0.5f, static_cast<float>(gsz.y) * 0.5f);
+            const float sc = (10.0f + static_cast<float>(i % 4) * 4.0f) / static_cast<float>(gsz.x);
+            sp.setScale(sc, sc);
+            sp.setPosition(px, py);
+            sp.setColor(sf::Color(255, 162, 62, static_cast<sf::Uint8>(155.0f * pulse)));
+            window.draw(sp, sf::BlendAdd);
         }
-        text.setString(sf::String::fromUtf8(label.begin(), label.end()));
-        text.setCharacterSize(lm.getScaledTextSize(16));
-        
-        sf::FloatRect bounds = text.getLocalBounds();
-        text.setOrigin(bounds.left + bounds.width / 2.0f, bounds.top + bounds.height / 2.0f);
-        text.setPosition(512.0f, menuY + idx * menuSpacing);
-        window.draw(text);
-    };
+    }
 
-    drawMenuItem("TITLE_NEW_GAME", 0);
-    drawMenuItem("TITLE_CONTINUE", 1);
-    drawMenuItem("TITLE_SETTINGS", 2);
-    drawMenuItem("TITLE_EXIT", 3);
+    // 2. 장엄한 타이틀 문장 헤더
+    const float bannerW = 680.0f;
+    const float bannerX = (Game::LOGICAL_WIDTH - bannerW) * 0.5f;
+    UiSystem::drawPanel(window, assets, {bannerX, 54.0f, bannerW, 134.0f}, true, 212);
+    UiSystem::drawCenteredText(window, font, "C R A W L M A S T E R",
+                               {bannerX, 70.0f, bannerW, 56.0f}, 42, UiTheme::textGold(), true);
+    UiSystem::drawCenteredText(window, font, lm.get("TITLE_SUBTITLE"),
+                               {bannerX, 132.0f, bannerW, 34.0f}, 16, UiTheme::textPrimary(), true);
 
+    // 3. 중앙 메뉴 카드 + 세이브 미리보기
+    const float menuW = 460.0f;
+    const float menuX = (Game::LOGICAL_WIDTH - menuW) * 0.5f;
+    const float menuY = 330.0f;
+    UiSystem::drawPanel(window, assets, {menuX - 24.0f, menuY - 22.0f, menuW + 48.0f, 276.0f}, false, 224);
+
+    std::string contLabel = lm.get("TITLE_CONTINUE");
+    if (m_preview.valid) {
+        contLabel += "  (" + std::to_string(m_preview.deepestFloor) + "F · " +
+                     std::to_string(m_preview.memberCount) + "P · " +
+                     std::to_string(m_preview.gold) + "G)";
+    }
+
+    const std::array<std::pair<std::string, std::string>, 4> items = {{
+        {lm.get("TITLE_NEW_GAME"), "1"},
+        {contLabel, "2"},
+        {lm.get("TITLE_SETTINGS"), "O"},
+        {lm.get("TITLE_EXIT"), "Esc"}
+    }};
+
+    for (int i = 0; i < 4; ++i) {
+        const sf::FloatRect r(menuX, menuY + static_cast<float>(i) * 58.0f, menuW, 48.0f);
+        m_buttonRects[static_cast<std::size_t>(i)] = r;
+        UiSystem::drawButton(window, assets, font, {
+            r, items[static_cast<std::size_t>(i)].first, items[static_cast<std::size_t>(i)].second,
+            m_selectedMenuIndex == i, r.contains(mouse), true, i == 0
+        });
+    }
+
+    // 4. 상태/경고 메시지 또는 구버전 세이브 격리 안내
     if (!m_statusMessage.empty()) {
-        m_statusText.setString(sf::String::fromUtf8(m_statusMessage.begin(), m_statusMessage.end()));
-        auto statusBounds = m_statusText.getLocalBounds();
-        m_statusText.setOrigin(statusBounds.left + statusBounds.width / 2.0f,
-                               statusBounds.top + statusBounds.height / 2.0f);
-        window.draw(m_statusText);
+        UiSystem::drawPanel(window, assets, {260.0f, 616.0f, 760.0f, 44.0f}, true, 236);
+        UiSystem::drawCenteredText(window, font, m_statusMessage,
+                                   {272.0f, 616.0f, 736.0f, 44.0f}, 14, UiTheme::textGold(), true);
     }
 
-    // 3. 점멸 하단 추가 안내문구 렌더링
-    if (m_showInstruction) {
-        std::string rawInst = lm.get("TITLE_PRESS_KEY");
-        m_instructionText.setString(sf::String::fromUtf8(rawInst.begin(), rawInst.end()));
-        sf::FloatRect instBounds = m_instructionText.getLocalBounds();
-        m_instructionText.setOrigin(instBounds.left + instBounds.width / 2.0f, instBounds.top + instBounds.height / 2.0f);
-        window.draw(m_instructionText);
+    // 5. 하단 버전 및 조작 힌트
+    UiSystem::drawText(window, font, "Crawlmaster v1.0.0 AAA Edition  ·  5-Floor Dark Fantasy Tactical RPG",
+                       {22.0f, 686.0f}, 13, UiTheme::textMuted(), true);
+    UiSystem::drawText(window, font, lm.get("TITLE_PRESS_KEY"),
+                       {820.0f, 686.0f}, 13, UiTheme::textMuted(), true, 440.0f);
+
+    // 6. 새 게임 덮어쓰기 모달 다이얼로그
+    if (m_confirmingNewGame) {
+        sf::RectangleShape dim({Game::LOGICAL_WIDTH, Game::LOGICAL_HEIGHT});
+        dim.setFillColor(sf::Color(0, 0, 0, 170));
+        window.draw(dim);
+
+        const sf::FloatRect modal(360.0f, 250.0f, 560.0f, 210.0f);
+        UiSystem::drawPanel(window, assets, modal, true, 250);
+        UiSystem::drawCenteredText(window, font, lm.get("TITLE_NEW_GAME"),
+                                   {modal.left, modal.top + 18.0f, modal.width, 32.0f}, 22, UiTheme::textGold(), true);
+        UiSystem::drawCenteredText(window, font, lm.get("TITLE_NEW_CONFIRM"),
+                                   {modal.left + 24.0f, modal.top + 66.0f, modal.width - 48.0f, 54.0f},
+                                   15, UiTheme::textPrimary(), true);
+        m_confirmYesRect = {modal.left + 58.0f, modal.top + 138.0f, 200.0f, 46.0f};
+        m_confirmNoRect = {modal.left + 302.0f, modal.top + 138.0f, 200.0f, 46.0f};
+        UiSystem::drawButton(window, assets, font, {
+            m_confirmYesRect, lm.get("COMMON_CONFIRM"), "Enter", true, m_confirmYesRect.contains(mouse), true, true
+        });
+        UiSystem::drawButton(window, assets, font, {
+            m_confirmNoRect, lm.get("COMMON_CANCEL"), "Esc", false, m_confirmNoRect.contains(mouse), true, false
+        });
     }
-
-    // 4. 저작권 크레딧 드로우
-    window.draw(m_creditText);
-}
-
-void TitleState::initTexts() {
-    const sf::Font& font = m_game.getFont();
-
-    // 1. 아스키 아트 로고 설정
-    std::string asciiLogo = 
-        "  ____                             _                        _   \n"
-        " / ___|_ __  __ ___      _| |_ __ ___   __ _ ___| |_ ___  _ __  \n"
-        "| |   | '__|/ _` \\ \\ /\\ / / | '_ ` _ \\ / _` / __| __/ _ \\| '__| \n"
-        "| |___| |  | (_| |\\ V  V /| | | | | | | (_| \\__ \\ ||  __/| |    \n"
-        " \\____|_|   \\__,_| \\_/\\_/ |_|_| |_| |_|\\__,_|___/\\__\\___||_|    \n"
-        "                                                                \n"
-        "            --- 3D GRID DUNGEON CRAWLER RPG ---                 ";
-
-    m_logoText.setFont(font);
-    m_logoText.setString(asciiLogo);
-    m_logoText.setCharacterSize(14);
-    m_logoText.setFillColor(sf::Color(51, 255, 51));
-    
-    sf::FloatRect logoBounds = m_logoText.getLocalBounds();
-    m_logoText.setOrigin(logoBounds.left + logoBounds.width / 2.0f, logoBounds.top + logoBounds.height / 2.0f);
-    m_logoText.setPosition(512.0f, 220.0f);
-
-    // 2. 안내 및 경고 점멸 문구 설정
-    m_instructionText.setFont(font);
-    m_instructionText.setCharacterSize(14);
-    m_instructionText.setFillColor(sf::Color(255, 176, 0)); // 호박색 (Amber)
-    m_instructionText.setPosition(512.0f, 580.0f);
-
-    // 3. 저작권 크레딧 설정
-    m_creditText.setFont(font);
-    m_creditText.setString("Crawlmaster 0.10.0 - PRE-RELEASE DEMO CANDIDATE");
-    m_creditText.setCharacterSize(14);
-    m_creditText.setFillColor(sf::Color(130, 170, 130));
-    
-    sf::FloatRect creditBounds = m_creditText.getLocalBounds();
-    m_creditText.setOrigin(creditBounds.left + creditBounds.width / 2.0f, creditBounds.top + creditBounds.height / 2.0f);
-    m_creditText.setPosition(512.0f, 720.0f);
-
-    m_statusText.setFont(font);
-    m_statusText.setCharacterSize(16);
-    m_statusText.setFillColor(sf::Color(255, 196, 80));
-    m_statusText.setPosition(512.0f, 630.0f);
 }
 
 } // namespace crawl

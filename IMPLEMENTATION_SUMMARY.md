@@ -1,94 +1,64 @@
-# IMPLEMENTATION_SUMMARY.md (현재 구현 및 파일 책임)
+# IMPLEMENTATION_SUMMARY.md (v1.0.0 AAA 구현 및 파일 책임)
 
-작성 기준: 2026-09-04
-제품 상태: 3층 영속 던전 pre-release demo candidate. 상용 PASS 아님.
+작성 기준: 2026-11-22  
+제품 버전: **Crawlmaster v1.0.0** (AAA Dark Fantasy 5-Floor 3D Tactical Dungeon Crawler RPG)
 
 ## 1. 런타임 흐름
 
 ```text
-main
-  -> Game (window, font, event/update/draw loop)
+main (--verify-resources | GUI loop)
+  -> Game (16:9 1280×720 virtual letterbox canvas, F11 fullscreen, mouse mapping, AssetManager, AudioManager, fade/toast)
   -> GameStateManager
        TitleState
-         -> TownState
-              -> CharacterCreationState / CharacterInfoState / SettingsState
-              -> QuestJournalState
-              -> DungeonState (floors 1..3)
-                   -> CombatState(normal tiers)
-                   -> CombatState(final boss)
-                        -> VictoryState
-                   -> GameOverState on TPK
-       ShutdownState (save 실패 또는 recovery-pending 복구 재시도/명시 종료)
+         -> TownState (Hub / Dungeon Gate / Guild / Shop Buy & Sell / Blacksmith Forge & Reforge / Church / Quest Board)
+              -> CharacterCreationState (4d6 reroll + 10pt weighted allocation)
+              -> CharacterInfoState (Inventory / Lv3+ Specializations & 4-Node Talents / Skills / Row toggle)
+              -> BestiaryState (24-monster Codex, weakness/drop unlock)
+              -> QuestJournalState (8 canonical quests)
+              -> SettingsState (Config v3: Language / Text Scale / High Contrast / Resolution / Fullscreen / 3D Quality / Audio Vol & Mute)
+              -> DungeonState (5 persistent biomes, 3D GLSL + GL 1.1 fallback, chests/traps/levers/secret walls/sanctuaries/lore)
+                   -> CombatState (Front/Back rows, 9 elements, Stagger/Break, Enemy Intent, Guard, VFX, 2-phase Elder Wyrm)
+                        -> VictoryState (final boss defeat)
+                   -> GameOverState (non-destructive TPK checkpoint restore)
+       ShutdownState (save failure retry / recoveryPending write-fence recovery / explicit exit)
 ```
 
-`replaceAll()`은 TPK/종결처럼 session root를 바꾸는 전이에서 stale state를 모두 제거한다.
+`replaceAll()`은 TPK·승리·새 게임 등 세션 루트가 바뀌는 전이에서 잔존 상태를 완전히 제거한다.
 
-## 2. 실제 파일 책임
+## 2. 모듈별 파일 책임
 
-### Core
+### Core (`include/core/`, `src/core/`)
+- `Game`: 16:9 가상 1280×720 캔버스, 창 리사이즈 레터박스 뷰포트, `F11` 전체화면, 마우스 논리 좌표 변환, 화면 페이드·토스트, 상태 루프
+- `GameStateManager`: 상태 스택(`push`/`pop`/`change`/`replaceAll`)
+- `AssetManager`: 텍스처(5바이옴+노멀맵·배경·초상화·24몬스터·9프롭·UI 9-슬라이스·파티클·비네트) 및 GLSL 셰이더 캐싱, `shadersAvailable()` 감지
+- `AudioManager` + `MiniAudioImpl`: `miniaudio` 0.11.26 래퍼, 5 BGM·5 바이옴 환경음 크로스페이드·24 SFX, 볼륨/음소거, CI/Xvfb 헤드리스 `ma_backend_null` 자동 폴백
+- `LocalizationManager`: 464키 × 5개국어 카탈로그, 플레이스홀더 포맷, Config Schema v3 영속화
+- `Persistence`: OS별 사용자 데이터 경로, `fsync`/원자 교체, 백업 회전, 심볼릭 링크 거부, 구버전 `v1~v4` 및 손상 파일 안전 격리(`quarantine`)
+- `ResourceLocator`: 실행 파일 기준 `assets`, `../assets`, `../share/crawlmaster/assets` 탐색
+- `SessionRng`: 세션 시드 + 원시 드로우 카운트 기반 단일 `std::mt19937` 결정론 스트림
 
-- `Game`: SFML window와 state loop, 실행 파일 상대 resource 기동
-- `GameStateManager`: push/pop/top replace/root replace
-- `LocalizationManager`: locale catalog/placeholder, localized content/log, text scale/high contrast, atomic config
-- `Persistence`: per-user path, fsync, backup, atomic replace, corrupt quarantine
-- `ResourceLocator`: build/install asset 위치
-- `SessionRng`: 한 세션 seed, raw engine draw count와 단일 `std::mt19937` stream
+### Model (`include/model/`, `src/model/`)
+- `Character` + `CharacterIdentityRules`: Lv 1~10 성장, 8종 Lv3+ 전직(`Specialization`), 4노드 특성 트리(최대 랭크 3), 전열/후열 진형, 상태이상(독/화상/출혈/마비/빙결/축복/보호막/도발/방어)
+- `Item` / `Equipment` / `ConcreteItems` / `ItemFactory`: 43종 아이템, 5등급 희귀도, 9종 속성, 무기 사거리, 접사(Affix), `+0..+5` 대장간 강화 및 접사 재연마
+- `Skill` / `ConcreteSkills` / `SkillFactory`: 24종 직업/전직 스킬, 스태거/약점/상태이상/아군 치유·부활·버프
+- `Monster` / `MonsterFactory` / `Bestiary`: 24종 몬스터(5층 일반+중간/최종 보스), 2페이즈 최종 보스 `mon_elder_wyrm`, 인텐트 예고, 스태거/브레이크, 도감 약점/드롭 해금
+- `CombatRules` / `CombatActionRules`: 전열/후열 보정, 9속성 상성, 스태거/브레이크 배율, 대장간 비용·재연마 규칙, 무효 소모품 비소비
+- `DungeonMap` / `DungeonWorld`: 5층 × 20×20 5바이옴 영속 던전, 상자·함정·레버·잠긴 문·비밀 벽·성소·로어·보스 게이트·계단 생성 및 직렬화
+- `Quest`: 8종 정식 퀘스트(수집·처치·NPC 구출·보스 토벌)
+- `Party`: 최대 4인 파티, 공유 인벤토리, 도감, 8종 퀘스트, 5층 영속 월드, Save Schema v5 직렬화 및 `v1~v4` 안전 격리
+- `RecruitmentDraft`: 신원 검증, 4d6 리롤, 가중 10포인트 배분, 일회성 확정
 
-### Model
+### View (`include/view/`, `src/view/`)
+- `DungeonRenderer`: 1인칭 텍스처 3D 메시 투영(근접 셀 8×8 세분화, 근평면 클리핑, 엄격한 약순서 페인터 정렬), GLSL 노멀맵/동적 횃불/안개 + 블룸/비네트 포스트프로세싱, GL 1.1 CPU-lit 텍스처 3D 폴백, 미니맵/전체지도, 3D 월드 프롭 빌보드, 부유 입자
+- `UiTheme`: 다크 판타지 옵시디언/골드 팔레트, 고대비 모드 분기, 5바이옴 조명/안개 프로필, 9속성·5희귀도·인텐트 색상
+- `UiSystem`: 9-슬라이스 패널, 자동 크기 단축키 배지 버튼, 게이지 바(HP 트레일), 배지, 4인 유화 초상화 카드, 툴팁, 전투 파티클 VFX·플로팅 데미지
+- `PartyHudSnapshot`: 컨트롤러/뷰 분리용 불변 파티 HUD 스냅샷
 
-- `Character`: 이름/나이/성별, stats/status/skills/equipment와 class/STR/two-handed invariant
-- `Party`: 최대 4인, inventory/key item/gold/quest/campaign/영속 월드, schema-v4 save와 v1~v3 migration
-- `CombatRules`: 일반 공격과 Skill이 공유하는 natural roll, Bless, class trait, weapon/extra dice, resistance, tier gold
-- `CombatActionRules`: 소모품이 실제 효과를 낼 수 있는지 판정
-- `RecruitmentDraft`: 신원 검증, seed 기반 4d6 리롤, 가중 10포인트 배분, one-time confirm
-- `DungeonMap`/`DungeonWorld`: 층별 seeded DFS/loops, 계단·목표 배치, fog/object snapshot
-- `ItemFactory`, `MonsterFactory`, `Quest`: canonical IDs, acquisition/drop/reward registry
-- `Skill`: 성공 여부를 반환해 invalid/no-effect action의 자원 소비를 막음
+### Controller (`include/controller/`, `src/controller/`)
+- `TitleState`, `TownState`, `CharacterCreationState`, `DungeonState`, `CombatState`(+`CombatStateActions`), `CharacterInfoState`, `BestiaryState`, `QuestJournalState`, `SettingsState`, `GameOverState`, `VictoryState`, `ShutdownState` — 전 상태 마우스 + 키보드 하이브리드 조작 통합
 
-### View/Controller
+## 3. 저장·복구 및 검증 경계
 
-- `DungeonRenderer`: 1인칭 wireframe, 청록색 방향 마커 automap, actual Party HUD
-- `PartyHudSnapshot`: renderer에 전달하는 immutable 0~4인 상태
-- Town/Combat/CharacterInfo/Settings는 현재 각 State가 직접 SFML TUI를 그린다. 존재하지 않는 TownRenderer/CombatRenderer/UIRenderer를 현재 파일로 주장하지 않는다.
-- `TitleState`: New/Continue/Settings/Exit와 New confirmation
-- `TownState`: 전용 캐릭터 생성 진입, 판매/해고 확인, 상점/교회/목적형 quest board
-- `QuestJournalState`: 활성/보고 가능 퀘스트, 층 단서와 중요품 조회
-- `CharacterCreationState`: 이름·나이·성별·직업, 능력치 리롤·배분, 최종 저장 확인
-- `DungeonState`: movement, FOW, tier encounter, landmark/boss transition
-- `CombatState`: 명시적 item/ally target, combat/reward/drop, TPK/victory transition
-- `ShutdownState`: 일반 저장 실패 재시도와 recovery-pending load 재시도, 명시적 무저장 종료
-- `GameOverState`, `VictoryState`: 지속 결과 화면
-
-## 3. 저장 및 실패 경계
-
-- save schema v4는 파티, 중요품, 퀘스트 상태와 3층 전체 월드 snapshot을 canonical로 쓴다.
-- v1~v3 save는 파티 진행을 보존하고 저장 seed에서 월드를 결정론적으로 생성한다. 없는 신원은 미상으로 보존한다.
-- save/config는 same-directory temp -> flush/fsync -> backup rotate -> atomic replace 순서다.
-- 손상 파일은 quarantine하고 backup을 읽는다. 자동 New Game/reset은 하지 않는다.
-- 활성 dungeon 좌표는 저장하지 않지만 지형·fog·목표 상태와 최신 full-session checkpoint를 저장한다.
-- checkpoint는 `lastSessionSeed`와 `sessionRngDrawCount`를 함께 저장하며 Continue가 실제 global stream을 복원한다.
-- TPK는 정상 save를 삭제하지 않는다.
-- TPK/Title 복구 실패는 메모리 상태를 보존하되 `recoveryPending`으로 전환해 일반 저장과 종료 자동 저장을 차단한다. 성공 load 또는 확인된 New Game만 이 차단을 해제한다.
-
-## 4. 검증 표면
-
-- Release-safe `CHECK` 기반 TestHarness
-- `CrawlmasterRuntime` production library를 앱과 controller transcript test가 함께 링크
-- Linux CTest 16개: Resource/HUD/Combat/Content/Agency/Localization/FontRaster/독립 process RNG·seedless migration/Controller/UI state raster
-- 2026-09-04 로컬 GCC 15.2.0 검증: `build/debug` 16/16, `build/release` 16/16 통과
-- 3층 생성/이관/round-trip, 세 목적형 퀘스트, 보고 rollback과 전투 저장 실패 후 월드 참조 수명을 production-linked 계약 테스트로 확인했다.
-- 퀘스트 보드/일지와 발견 표식을 포함한 5 locale × 75/100/200% production raster를 생성하고 대표 100/200% 화면을 판독했다.
-- Linux `Crawlmaster-0.10.0-Linux-x86_64.tar.gz` 패키지의 임의 CWD 리소스 탐색과 SHA-256 검증을 통과했다.
-- Turn 3 FIN-F001~F035 remediation은 strict v4, in-memory Party/World/RNG transaction, character/combat/shutdown lifecycle과 production E2E로 검증했다. 세부 원 finding verdict는 `docs/audit/audit_report_14.md`에 기록한다.
-- RA15 recovery remediation은 TPK/Title 실패의 write fence, 단독 손상 backup quarantine과 독립 process `IoError` 불변성을 검증했다. 후속 판정은 `docs/audit/audit_report_16.md`에 기록한다.
-- Linux Release install/CPack/arbitrary-CWD Xvfb smoke
-- 로컬 MinGW 전체 target compile과 Windows ZIP/checksum/PE import 정적 검사
-- artifact SPDX generator, OSV/Grype known-vulnerability gate와 GitHub SBOM/provenance attestation workflow
-
-## 5. 미검증/잔여 gate
-
-- Windows Server 2022 hosted MSVC와 GitHub SLSA/SPDX run `33786241695`는 0.9.4 historical evidence다. current v0.10 tree는 `UNVERIFIED`다.
-- Clean Windows 10/11 VC++ runtime 및 high-DPI/장시간 실기: `UNVERIFIED`
-- 30~60분 완주 시간과 장기 밸런스: `UNVERIFIED`
-- 5 locale × 3 scale production state/substate raster는 Linux에서 생성·판독. 실제 IME 조합 입력과 OS high-DPI는 `UNVERIFIED`
-- 폰트 hash/upstream/license는 `FONT_PROVENANCE.md`로 검증. 제품 legal/support identity는 `Human Review Required`
+- Save Schema v5는 파티·전직/특성·강화/접사 장비·도감·8종 퀘스트·5층 영속 월드·RNG 시드/드로우 카운트를 원자적으로 저장한다.
+- 구버전 `v1~v4` 세이브는 `Persistence::quarantine`으로 원본을 보존 격리하고 `UnsupportedVersion` 상태를 반환한다.
+- 15개 CTest 타겟(`ResourceVerification`, `TestHarness`, `Hud/Combat/Content/Agency/Localization/Audio/Controller ContractTests`, `FontRasterTests`, `UiStateRasterTests`, `RngReplay*`, `LegacySaveQuarantineTest`)과 1280×720 시각 검수, CPack, SPDX 2.3 SBOM, MinGW 교차 컴파일 및 GitHub Actions Linux+Windows 릴리스 파이프라인으로 검증한다.

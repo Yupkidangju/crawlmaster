@@ -3,13 +3,28 @@
 
 #include "model/DungeonMap.hpp"
 #include <cstdint>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
 namespace crawl {
 
-enum class WorldObjectKind { QUEST_ITEM, NPC, QUEST_BOSS };
-enum class WorldObjectState { PRESENT, DISCOVERED, RESOLVED };
+enum class WorldObjectKind {
+    QUEST_ITEM = 0,
+    NPC = 1,
+    QUEST_BOSS = 2,
+    CHEST = 3,
+    TRAP = 4,
+    LEVER = 5,
+    SANCTUARY = 6,
+    LORE_PLAQUE = 7
+};
+
+enum class WorldObjectState {
+    PRESENT = 0,
+    DISCOVERED = 1,
+    RESOLVED = 2
+};
 
 struct WorldObject {
     std::string id;
@@ -24,7 +39,7 @@ struct WorldObject {
 
 class DungeonWorld {
 public:
-    static constexpr int FLOOR_COUNT = 3;
+    static constexpr int FLOOR_COUNT = 5;
 
     void generate(std::uint32_t seed);
     [[nodiscard]] bool isGenerated() const;
@@ -39,7 +54,7 @@ public:
     WorldObject* findObjectAt(int floorNumber, int x, int y);
     const WorldObject* findObjectAt(int floorNumber, int x, int y) const;
 
-    nlohmann::json toJson() const;
+    [[nodiscard]] nlohmann::json toJson() const;
     static DungeonWorld fromJson(const nlohmann::json& json);
     void validate() const;
 
@@ -52,4 +67,4 @@ private:
 
 } // namespace crawl
 
-#endif
+#endif // DUNGEON_WORLD_HPP

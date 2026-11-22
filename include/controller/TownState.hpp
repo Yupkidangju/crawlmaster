@@ -1,27 +1,25 @@
-// [v0.3.0] TownState.hpp 수정 (마을 상호작용 TUI 서브시스템 구현)
-// 길드(캐릭터 생성), 상점(장비 매매), 교회(부활/치료) 기능을 관리하기 위한 서브 상태 FSM 및 TUI 텍스트 요소 정의.
-
 #ifndef TOWN_STATE_HPP
 #define TOWN_STATE_HPP
 
 #include "core/GameState.hpp"
-#include <vector>
-#include <string>
 #include <memory>
+#include <string>
+#include <vector>
 
 namespace crawl {
 
-class Game; // 전방 선언
+class Game;
+class Equipment;
 
-// 마을 서브 상태 정의
-enum class TownSubState {
-    HUB,        // 마을 허브 광장
-    GUILD,      // 모험가 길드 (캐릭터 생성/삭제)
-    SHOP,       // 상점 (구매/판매 선택)
-    SHOP_BUY,   // 상점 구매 카탈로그
-    SHOP_SELL,  // 상점 판매 목록
-    TEMPLE,     // 교회 (치료)
-    CASTLE      // 영주 성/캠프 (퀘스트 수주/보고)
+enum class TownLocation {
+    HUB = 0,
+    GUILD = 1,
+    SHOP_BUY = 2,
+    SHOP_SELL = 3,
+    BLACKSMITH = 4,
+    CHURCH = 5,
+    QUEST_BOARD = 6,
+    DUNGEON_GATE = 7
 };
 
 class TownState : public GameState {
@@ -34,23 +32,35 @@ public:
     void draw(sf::RenderWindow& window) override;
 
 private:
-    Game& m_game;                       // 전역 Game 참조
-    TownSubState m_subState;            // 현재 마을 활성 서브 장소
+    struct ClickItem {
+        sf::FloatRect rect;
+        int actionId = -1;
+    };
 
-    sf::Text m_titleText;               // 상단 건물 타이틀 텍스트
-    sf::Text m_menuText;                // 중앙 상호작용 옵션 텍스트
-    sf::Text m_partyText;               // 우측 파티 상태 요약 텍스트
-    sf::Text m_statusText;              // 하단 거래 결과 및 알림 텍스트
+    struct ForgeEntry {
+        std::shared_ptr<Equipment> equip;
+        std::string ownerLabel;
+    };
 
-    std::string m_notifyMessage;        // 상점 거래 성공/실패 알림 버퍼
+    void handleHubAction(int actionId);
+    void handleSubAction(int actionId);
+    std::vector<ForgeEntry> collectForgeEntries() const;
+    void setNotice(const std::string& msg);
 
-    void setSubState(TownSubState state); // 서브 상태 변경 및 텍스트 갱신 함수
-    void initTexts();                   // UI 텍스트 기본 셋업
-    void updateTuiContent();            // 서브 상태에 따라 드로우할 텍스트 동적 재구성
-
+    Game& m_game;
+    TownLocation m_location = TownLocation::HUB;
+    int m_selectedIndex = 0;
+    int m_hoveredIndex = -1;
+    int m_selectedFloor = 1;
+    int m_pendingConfirmIndex = -1;
     bool m_confirmingDismiss = false;
-    int m_pendingSaleIndex = -1;
-    int m_questSelection = 0;
+    bool m_confirmingSell = false;
+    std::string m_statusMessage;
+    float m_time = 0.0f;
+
+    std::vector<ClickItem> m_navButtons;
+    std::vector<ClickItem> m_listButtons;
+    std::vector<ClickItem> m_actionButtons;
 };
 
 } // namespace crawl

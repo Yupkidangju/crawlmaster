@@ -1,291 +1,310 @@
 #include "controller/CharacterCreationState.hpp"
-
+#include "core/AudioManager.hpp"
 #include "core/Game.hpp"
 #include "core/LocalizationManager.hpp"
 #include "core/SessionRng.hpp"
-#include "model/Party.hpp"
+#include "model/CharacterIdentityRules.hpp"
+#include "view/UiSystem.hpp"
+#include "view/UiTheme.hpp"
 
-#include <algorithm>
 #include <array>
-#include <sstream>
-#include <vector>
 
 namespace crawl {
 namespace {
 
-std::string toUtf8(const sf::String& value) {
-    const auto bytes = value.toUtf8();
-    return {bytes.begin(), bytes.end()};
-}
-
-std::string className(CharacterClass value, const LocalizationManager& localization) {
-    switch (value) {
-        case CharacterClass::WARRIOR: return localization.get("CLASS_WARRIOR");
-        case CharacterClass::MAGE: return localization.get("CLASS_MAGE");
-        case CharacterClass::ROGUE: return localization.get("CLASS_ROGUE");
-        case CharacterClass::CLERIC: return localization.get("CLASS_CLERIC");
-    }
-    return {};
-}
-
-std::string genderName(Gender value, const LocalizationManager& localization) {
-    switch (value) {
-        case Gender::MALE: return localization.get("GENDER_MALE");
-        case Gender::FEMALE: return localization.get("GENDER_FEMALE");
-        case Gender::NON_BINARY: return localization.get("GENDER_NON_BINARY");
-        case Gender::UNSPECIFIED: return localization.get("GENDER_UNSPECIFIED");
-    }
-    return {};
-}
-
-const char* traitKey(CharacterClass value) {
-    switch (value) {
-        case CharacterClass::WARRIOR: return "TRAIT_WARRIOR";
-        case CharacterClass::MAGE: return "TRAIT_MAGE";
-        case CharacterClass::ROGUE: return "TRAIT_ROGUE";
-        case CharacterClass::CLERIC: return "TRAIT_CLERIC";
-    }
-    return "";
-}
-
-const char* profileKey(CharacterClass value) {
-    switch (value) {
-        case CharacterClass::WARRIOR: return "CLASS_PROFILE_WARRIOR";
-        case CharacterClass::MAGE: return "CLASS_PROFILE_MAGE";
-        case CharacterClass::ROGUE: return "CLASS_PROFILE_ROGUE";
-        case CharacterClass::CLERIC: return "CLASS_PROFILE_CLERIC";
-    }
-    return "";
-}
-
-const std::array<Ability, 6> abilities = {
+constexpr std::array<Ability, 6> kAbilities = {
     Ability::STRENGTH, Ability::DEXTERITY, Ability::CONSTITUTION,
-    Ability::INTELLIGENCE, Ability::WISDOM, Ability::CHARISMA};
+    Ability::INTELLIGENCE, Ability::WISDOM, Ability::CHARISMA
+};
 
-const std::array<const char*, 6> abilityKeys = {
-    "CHAR_INFO_STR", "CHAR_INFO_DEX", "CHAR_INFO_CON",
-    "CHAR_INFO_INT", "CHAR_INFO_WIS", "CHAR_INFO_CHA"};
-
-int abilityValue(const AbilityScore& scores, Ability ability) {
-    switch (ability) {
-        case Ability::STRENGTH: return scores.strength;
-        case Ability::DEXTERITY: return scores.dexterity;
-        case Ability::CONSTITUTION: return scores.constitution;
-        case Ability::INTELLIGENCE: return scores.intelligence;
-        case Ability::WISDOM: return scores.wisdom;
-        case Ability::CHARISMA: return scores.charisma;
-    }
-    return scores.strength;
-}
+constexpr std::array<const char*, 6> kAbilityKeys = {
+    "STAT_STR", "STAT_DEX", "STAT_CON", "STAT_INT", "STAT_WIS", "STAT_CHA"
+};
 
 } // namespace
 
 CharacterCreationState::CharacterCreationState(Game& game)
     : m_game(game), m_draft(SessionRng::global()) {
-    m_statusMessage = LocalizationManager::getInstance().get("CREATE_IDENTITY_GUIDE");
+    m_nameBuffer = "Hero";
+    m_draft.setName(m_nameBuffer);
+}
+
+void CharacterCreationState::adjustFocused(int delta) {
+    if (m_focusIndex == static_cast<int>(FocusRow::AGE)) {
+        m_draft.setAge(m_draft.identity().age + delta);
+    } else if (m_focusIndex == static_cast<int>(FocusRow::GENDER)) {
+        const int cur = static_cast<int>(m_draft.identity().gender);
+        m_draft.setGender(static_cast<Gender>((cur + delta + 4) % 4));
+    } else if (m_focusIndex == static_cast<int>(FocusRow::CLASS)) {
+        const int cur = static_cast<int>(m_draft.identity().characterClass);
+        m_draft.setClass(static_cast<CharacterClass>((cur + delta + 4) % 4));
+    } else if (m_focusIndex >= static_cast<int>(FocusRow::STR) &&
+               m_focusIndex <= static_cast<int>(FocusRow::CHA)) {
+        const auto ab = kAbilities[static_cast<std::size_t>(m_focusIndex - 4)];
+        if (delta > 0) m_draft.increase(ab);
+        else m_draft.decrease(ab);
+    }
+    AudioManager::getInstance().playSfx("sfx_ui_click");
+}
+
+void CharacterCreationState::attemptConfirm() {
+    const auto& lm = LocalizationManager::getInstance();
+    m_draft.setName(m_nameBuffer);
+    if (!m_draft.isReady()) {
+        m_statusMessage = lm.get("CHAR_CREATE_INVALID");
+        AudioManager::getInstance().playSfx("sfx_ui_error");
+        return;
+    }
+    if (m_game.getParty().getMemberCount() >= Party::MAX_MEMBERS) {
+        m_statusMessage = lm.get("TOWN_GUILD_FULL");
+        AudioManager::getInstance().playSfx("sfx_ui_error");
+        return;
+    }
+    const PartyCheckpoint cp = m_game.getParty().captureCheckpoint();
+    if (!m_draft.confirm(m_game.getParty())) {
+        m_statusMessage = lm.get("CHAR_CREATE_INVALID");
+        AudioManager::getInstance().playSfx("sfx_ui_error");
+        return;
+    }
+    const auto saveRes = m_game.getParty().saveToFile();
+    if (!saveRes || !saveRes.durabilityConfirmed()) {
+        m_game.getParty().restoreCheckpoint(cp);
+        m_statusMessage = lm.get("TITLE_SAVE_ERROR");
+        AudioManager::getInstance().playSfx("sfx_ui_error");
+        return;
+    }
+    AudioManager::getInstance().playSfx("sfx_levelup");
+    m_game.pushToast(lm.format("CHAR_CREATE_SUCCESS", {{"name", m_draft.identity().name}}));
+    m_game.getStates().popState();
 }
 
 void CharacterCreationState::handleInput(const sf::Event& event) {
-    if (event.type == sf::Event::TextEntered && m_stage == CharacterCreationStage::IDENTITY &&
-        m_identityRow == 0) {
-        handleTextEntered(event.text.unicode);
+    if (event.type == sf::Event::TextEntered && m_focusIndex == static_cast<int>(FocusRow::NAME)) {
+        const sf::Uint32 u = event.text.unicode;
+        if (u == 8) {
+            if (!m_nameBuffer.empty()) {
+                m_nameBuffer.pop_back();
+                m_draft.setName(m_nameBuffer);
+            }
+        } else if (u >= 32 && u < 127 && m_nameBuffer.size() < 18) {
+            m_nameBuffer.push_back(static_cast<char>(u));
+            m_draft.setName(m_nameBuffer);
+        }
         return;
     }
+
+    if (event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Left) {
+        const auto pos = m_game.mapPixelToLogical({event.mouseButton.x, event.mouseButton.y});
+        for (int i = 0; i < 4; ++i) {
+            if (m_classRects[static_cast<std::size_t>(i)].contains(pos)) {
+                m_draft.setClass(static_cast<CharacterClass>(i));
+                m_focusIndex = static_cast<int>(FocusRow::CLASS);
+                AudioManager::getInstance().playSfx("sfx_ui_click");
+                return;
+            }
+        }
+        for (int i = 0; i < 6; ++i) {
+            if (m_statMinusRects[static_cast<std::size_t>(i)].contains(pos)) {
+                m_draft.decrease(kAbilities[static_cast<std::size_t>(i)]);
+                AudioManager::getInstance().playSfx("sfx_ui_click");
+                return;
+            }
+            if (m_statPlusRects[static_cast<std::size_t>(i)].contains(pos)) {
+                m_draft.increase(kAbilities[static_cast<std::size_t>(i)]);
+                AudioManager::getInstance().playSfx("sfx_ui_click");
+                return;
+            }
+        }
+        if (m_ageMinusRect.contains(pos)) { m_draft.setAge(m_draft.identity().age - 1); AudioManager::getInstance().playSfx("sfx_ui_click"); return; }
+        if (m_agePlusRect.contains(pos)) { m_draft.setAge(m_draft.identity().age + 1); AudioManager::getInstance().playSfx("sfx_ui_click"); return; }
+        if (m_genderRect.contains(pos)) {
+            const int cur = static_cast<int>(m_draft.identity().gender);
+            m_draft.setGender(static_cast<Gender>((cur + 1) % 4));
+            AudioManager::getInstance().playSfx("sfx_ui_click");
+            return;
+        }
+        if (m_rerollRect.contains(pos)) { m_draft.reroll(); AudioManager::getInstance().playSfx("sfx_ui_click"); return; }
+        if (m_confirmRect.contains(pos)) { attemptConfirm(); return; }
+        if (m_cancelRect.contains(pos)) { AudioManager::getInstance().playSfx("sfx_ui_click"); m_game.getStates().popState(); return; }
+        return;
+    }
+
+    if (event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Right) {
+        AudioManager::getInstance().playSfx("sfx_ui_click");
+        m_game.getStates().popState();
+        return;
+    }
+
     if (event.type != sf::Event::KeyPressed) return;
-    if (m_stage == CharacterCreationStage::IDENTITY) handleIdentityKey(event.key.code);
-    else if (m_stage == CharacterCreationStage::ABILITIES) handleAbilityKey(event.key.code);
-    else handleConfirmKey(event.key.code);
-}
-
-void CharacterCreationState::handleIdentityKey(sf::Keyboard::Key key) {
-    auto& localization = LocalizationManager::getInstance();
+    const auto key = event.key.code;
     if (key == sf::Keyboard::Escape) {
+        AudioManager::getInstance().playSfx("sfx_ui_click");
         m_game.getStates().popState();
-    } else if (key == sf::Keyboard::Up) {
-        m_identityRow = (m_identityRow + 3) % 4;
-    } else if (key == sf::Keyboard::Down || key == sf::Keyboard::Tab) {
-        m_identityRow = (m_identityRow + 1) % 4;
-    } else if (key == sf::Keyboard::BackSpace && m_identityRow == 0 && !m_nameInput.isEmpty()) {
-        m_nameInput.erase(m_nameInput.getSize() - 1);
-    } else if (key == sf::Keyboard::Left || key == sf::Keyboard::Right) {
-        const int direction = key == sf::Keyboard::Right ? 1 : -1;
-        if (m_identityRow == 1) {
-            const int age = std::clamp(m_draft.identity().age + direction, 18, 80);
-            m_draft.setAge(age);
-        } else if (m_identityRow == 2) {
-            const int current = static_cast<int>(m_draft.identity().gender);
-            m_draft.setGender(static_cast<Gender>((current + direction + 3) % 3));
-        } else if (m_identityRow == 3) {
-            const int current = static_cast<int>(m_draft.identity().characterClass);
-            m_draft.setClass(static_cast<CharacterClass>((current + direction + 4) % 4));
-        }
-    } else if (key == sf::Keyboard::Enter) {
-        if (!m_draft.setName(toUtf8(m_nameInput))) {
-            m_statusMessage = localization.get("CREATE_NAME_INVALID");
-            return;
-        }
-        m_stage = CharacterCreationStage::ABILITIES;
-        m_statusMessage = localization.get("CREATE_ABILITY_GUIDE");
+        return;
     }
-}
-
-void CharacterCreationState::handleAbilityKey(sf::Keyboard::Key key) {
-    auto& localization = LocalizationManager::getInstance();
-    const Ability selected = abilities[static_cast<std::size_t>(m_abilityRow)];
-    if (key == sf::Keyboard::Escape) {
-        m_stage = CharacterCreationStage::IDENTITY;
-        m_statusMessage = localization.get("CREATE_IDENTITY_GUIDE");
-    } else if (key == sf::Keyboard::Up) {
-        m_abilityRow = (m_abilityRow + 5) % 6;
+    if (key == sf::Keyboard::Up) {
+        m_focusIndex = (m_focusIndex + 12) % 13;
+        AudioManager::getInstance().playSfx("sfx_ui_hover");
     } else if (key == sf::Keyboard::Down || key == sf::Keyboard::Tab) {
-        m_abilityRow = (m_abilityRow + 1) % 6;
-    } else if (key == sf::Keyboard::Right || key == sf::Keyboard::Add) {
-        if (!m_draft.increase(selected)) m_statusMessage = localization.get("CREATE_CANNOT_INCREASE");
-    } else if (key == sf::Keyboard::Left || key == sf::Keyboard::Subtract) {
-        if (!m_draft.decrease(selected)) m_statusMessage = localization.get("CREATE_CANNOT_DECREASE");
-    } else if (key == sf::Keyboard::R) {
+        m_focusIndex = (m_focusIndex + 1) % 13;
+        AudioManager::getInstance().playSfx("sfx_ui_hover");
+    } else if (key == sf::Keyboard::Left) {
+        adjustFocused(-1);
+    } else if (key == sf::Keyboard::Right) {
+        adjustFocused(1);
+    } else if (key == sf::Keyboard::R && m_focusIndex != static_cast<int>(FocusRow::NAME)) {
         m_draft.reroll();
-        m_statusMessage = localization.get("CREATE_REROLLED");
+        AudioManager::getInstance().playSfx("sfx_ui_click");
     } else if (key == sf::Keyboard::Enter) {
-        if (!m_draft.isReady()) {
-            m_statusMessage = localization.get("CREATE_SPEND_ALL");
-            return;
+        if (m_focusIndex == static_cast<int>(FocusRow::REROLL)) {
+            m_draft.reroll();
+            AudioManager::getInstance().playSfx("sfx_ui_click");
+        } else if (m_focusIndex == static_cast<int>(FocusRow::CANCEL)) {
+            m_game.getStates().popState();
+        } else if (m_focusIndex == static_cast<int>(FocusRow::CONFIRM)) {
+            attemptConfirm();
+        } else {
+            m_focusIndex = (m_focusIndex + 1) % 13;
         }
-        m_stage = CharacterCreationStage::CONFIRM;
-        m_statusMessage = localization.get("CREATE_CONFIRM_GUIDE");
     }
 }
 
-void CharacterCreationState::handleConfirmKey(sf::Keyboard::Key key) {
-    if (m_committedWithWarning && (key == sf::Keyboard::Escape || key == sf::Keyboard::Enter)) {
-        m_game.getStates().popState();
-        return;
-    }
-    if (key == sf::Keyboard::Escape) {
-        m_stage = CharacterCreationStage::ABILITIES;
-        m_statusMessage = LocalizationManager::getInstance().get("CREATE_ABILITY_GUIDE");
-    } else if (key == sf::Keyboard::Enter) {
-        commitCharacter();
-    }
-}
-
-void CharacterCreationState::handleTextEntered(sf::Uint32 unicode) {
-    if (unicode < 0x20U || unicode == 0x7FU || m_nameInput.getSize() >= 16) return;
-    sf::String candidate = m_nameInput;
-    candidate += unicode;
-    if (RecruitmentDraft::isValidName(toUtf8(candidate)) || unicode == ' ') {
-        m_nameInput = std::move(candidate);
-    }
-}
-
-void CharacterCreationState::commitCharacter() {
-    const PartyCheckpoint checkpoint = m_game.getParty().captureCheckpoint();
-    auto candidate = m_draft.createCandidate();
-    if (!candidate || !m_game.getParty().addMember(candidate)) {
-        m_statusMessage = LocalizationManager::getInstance().get("CREATE_PARTY_FULL");
-        return;
-    }
-    const auto result = m_game.getParty().saveToFile();
-    if (!result.durabilityConfirmed()) {
-        m_statusMessage = LocalizationManager::getInstance().get("CREATE_DURABILITY_UNKNOWN");
-        m_committedWithWarning = true;
-    } else if (!result) {
-        m_game.getParty().restoreCheckpoint(checkpoint);
-        m_statusMessage = LocalizationManager::getInstance().get("CREATE_SAVE_FAILED");
-    } else {
-        m_game.getStates().popState();
-    }
-}
-
-void CharacterCreationState::update(sf::Time) {}
+void CharacterCreationState::update(sf::Time /*deltaTime*/) {}
 
 void CharacterCreationState::draw(sf::RenderWindow& window) {
-    auto& localization = LocalizationManager::getInstance();
-    const sf::Color neon(51, 255, 51);
-    const sf::Color bright(102, 255, 102);
-    const sf::Color amber(255, 176, 0);
-    const bool large = localization.getTextScale() > 125;
-    drawText(window, localization.get("CREATE_TITLE"), 512.0f, large ? 24.0f : 30.0f,
-             large ? 18U : 20U, bright, true);
-    drawFrame(window, 40.0f, large ? 90.0f : 100.0f, 944.0f, large ? 545.0f : 520.0f, neon);
+    auto& assets = m_game.getAssets();
+    const auto& font = m_game.getFont();
+    const auto& lm = LocalizationManager::getInstance();
+    const auto mouse = m_game.getMouseLogicalPosition();
 
-    std::vector<std::string> lines;
-    if (m_stage == CharacterCreationStage::IDENTITY) {
-        const auto& identity = m_draft.identity();
-        const std::array<std::string, 4> values = {
-            toUtf8(m_nameInput) + (m_identityRow == 0 ? "_" : ""),
-            std::to_string(identity.age), genderName(identity.gender, localization),
-            className(identity.characterClass, localization)};
-        const std::array<const char*, 4> keys = {"CREATE_NAME", "CREATE_AGE", "CREATE_GENDER", "CREATE_CLASS"};
-        for (int row = 0; row < 4; ++row) {
-            lines.push_back(std::string(row == m_identityRow ? "> " : "  ") +
-                            localization.get(keys[static_cast<std::size_t>(row)]) + ": " +
-                            values[static_cast<std::size_t>(row)]);
-        }
-        lines.push_back(localization.get("CREATE_TRAIT") + ": " +
-                        localization.get(traitKey(identity.characterClass)));
-        lines.push_back(localization.get(profileKey(identity.characterClass)));
-    } else {
-        const auto& base = m_draft.baseAbilities();
-        const auto& current = m_draft.abilities();
-        for (int row = 0; row < 6; ++row) {
-            const Ability ability = abilities[static_cast<std::size_t>(row)];
-            std::ostringstream line;
-            line << (m_stage == CharacterCreationStage::ABILITIES && row == m_abilityRow ? "> " : "  ")
-                 << localization.get(abilityKeys[static_cast<std::size_t>(row)]) << ": "
-                 << abilityValue(base, ability) << " -> " << abilityValue(current, ability);
-            if (m_stage == CharacterCreationStage::ABILITIES && row == m_abilityRow) {
-                line << "  (" << localization.get("CREATE_NEXT_COST") << ": "
-                     << m_draft.increaseCost(ability) << ")";
-            }
-            lines.push_back(line.str());
-        }
-        lines.push_back(localization.get("CREATE_REMAINING") + ": " +
-                        std::to_string(m_draft.remainingPoints()));
-        if (m_stage == CharacterCreationStage::CONFIRM) {
-            const auto& identity = m_draft.identity();
-            lines.insert(lines.begin(), identity.name + " / " + std::to_string(identity.age) + " / " +
-                         genderName(identity.gender, localization) + " / " +
-                         className(identity.characterClass, localization));
-        }
+    UiSystem::drawBackdrop(window, assets, "town_bg", 145);
+
+    const sf::FloatRect frame(70.0f, 36.0f, 1140.0f, 648.0f);
+    UiSystem::drawPanel(window, assets, frame, true, 238);
+    UiSystem::drawCenteredText(window, font, lm.get("CHAR_CREATE_TITLE"),
+                               {frame.left, frame.top + 14.0f, frame.width, 36.0f}, 24, UiTheme::textGold(), true);
+
+    // 좌측: 초상화 & 직업 선택 카드
+    const auto& id = m_draft.identity();
+    static constexpr std::array<const char*, 4> kSlugs = {"warrior", "mage", "rogue", "cleric"};
+    static constexpr std::array<const char*, 4> kClassKeys = {"CLASS_WARRIOR", "CLASS_MAGE", "CLASS_ROGUE", "CLASS_CLERIC"};
+    const std::string curSlug = kSlugs[static_cast<std::size_t>(id.characterClass)];
+
+    const sf::FloatRect pBox(108.0f, 96.0f, 236.0f, 236.0f);
+    UiSystem::drawPanel(window, assets, pBox, true, 240);
+    if (const sf::Texture* tex = assets.getPortraitTexture(curSlug)) {
+        sf::Sprite sp(*tex);
+        const auto sz = tex->getSize();
+        sp.setScale(220.0f / static_cast<float>(sz.x), 220.0f / static_cast<float>(sz.y));
+        sp.setPosition(pBox.left + 8.0f, pBox.top + 8.0f);
+        window.draw(sp);
     }
 
-    const float startY = large ? 125.0f : 135.0f;
-    const float spacing = large ? 45.0f : 42.0f;
-    const unsigned int bodySize = large ? 12U : 14U;
-    for (std::size_t index = 0; index < lines.size(); ++index) {
-        const bool selected = lines[index].starts_with("> ");
-        drawText(window, lines[index], 70.0f, startY + static_cast<float>(index) * spacing,
-                 bodySize, selected ? amber : bright);
+    for (int i = 0; i < 4; ++i) {
+        const float bx = 108.0f + static_cast<float>(i % 2) * 122.0f;
+        const float by = 348.0f + static_cast<float>(i / 2) * 52.0f;
+        m_classRects[static_cast<std::size_t>(i)] = {bx, by, 114.0f, 44.0f};
+        UiSystem::drawButton(window, assets, font, {
+            m_classRects[static_cast<std::size_t>(i)], lm.get(kClassKeys[static_cast<std::size_t>(i)]), "",
+            static_cast<int>(id.characterClass) == i,
+            m_classRects[static_cast<std::size_t>(i)].contains(mouse), true,
+            static_cast<int>(id.characterClass) == i
+        });
     }
-    drawText(window, m_statusMessage, 512.0f, large ? 660.0f : 650.0f,
-             large ? 10U : 12U, amber, true);
-}
 
-void CharacterCreationState::drawText(sf::RenderWindow& window, const std::string& text,
-                                        float x, float y, unsigned int baseSize,
-                                        sf::Color color, bool centered) const {
-    sf::Text drawable;
-    drawable.setFont(m_game.getFont());
-    drawable.setString(sf::String::fromUtf8(text.begin(), text.end()));
-    drawable.setCharacterSize(LocalizationManager::getInstance().getScaledTextSize(baseSize));
-    drawable.setFillColor(color);
-    if (centered) {
-        const auto bounds = drawable.getLocalBounds();
-        drawable.setOrigin(bounds.left + bounds.width / 2.0f, bounds.top + bounds.height / 2.0f);
+    // 클래스 추천 진형/설명
+    const std::string classDesc = lm.get("CLASS_DESC_" + std::to_string(static_cast<int>(id.characterClass)));
+    const auto descLines = UiSystem::wrapUtf8Lines(classDesc, font, 13, 236.0f);
+    float dy = 464.0f;
+    for (const auto& l : descLines) {
+        UiSystem::drawText(window, font, l, {108.0f, dy}, 13, UiTheme::textMuted(), false);
+        dy += 18.0f;
     }
-    drawable.setPosition(x, y);
-    window.draw(drawable);
-}
 
-void CharacterCreationState::drawFrame(sf::RenderWindow& window, float x, float y,
-                                         float width, float height, sf::Color color) const {
-    sf::RectangleShape frame({width, height});
-    frame.setPosition(x, y);
-    frame.setFillColor(sf::Color::Transparent);
-    frame.setOutlineColor(color);
-    frame.setOutlineThickness(2.0f);
-    window.draw(frame);
+    // 우측: 신원 입력 + 6대 능력치 가중 배분
+    const float rx = 390.0f;
+    UiSystem::drawPanel(window, assets, {rx, 96.0f, 780.0f, 128.0f}, false, 224);
+
+    // 이름 입력
+    UiSystem::drawText(window, font, lm.get("CHAR_CREATE_NAME"), {rx + 18.0f, 110.0f}, 14, UiTheme::textMuted());
+    sf::RectangleShape nameBox({290.0f, 34.0f});
+    nameBox.setPosition(rx + 18.0f, 134.0f);
+    nameBox.setFillColor(sf::Color(12, 13, 19));
+    nameBox.setOutlineThickness(m_focusIndex == 0 ? 2.0f : 1.0f);
+    nameBox.setOutlineColor(m_focusIndex == 0 ? UiTheme::borderGold() : UiTheme::borderBronze());
+    window.draw(nameBox);
+    UiSystem::drawText(window, font, m_nameBuffer + (m_focusIndex == 0 ? "_" : ""),
+                       {rx + 28.0f, 142.0f}, 15, UiTheme::textPrimary(), false, 270.0f);
+
+    // 나이
+    UiSystem::drawText(window, font, lm.get("CHAR_CREATE_AGE"), {rx + 332.0f, 110.0f}, 14, UiTheme::textMuted());
+    m_ageMinusRect = {rx + 332.0f, 134.0f, 34.0f, 34.0f};
+    m_agePlusRect = {rx + 428.0f, 134.0f, 34.0f, 34.0f};
+    UiSystem::drawButton(window, assets, font, {m_ageMinusRect, "-", "", false, m_ageMinusRect.contains(mouse), true, false});
+    UiSystem::drawCenteredText(window, font, std::to_string(id.age), {rx + 366.0f, 134.0f, 62.0f, 34.0f}, 16, UiTheme::textPrimary());
+    UiSystem::drawButton(window, assets, font, {m_agePlusRect, "+", "", false, m_agePlusRect.contains(mouse), true, false});
+
+    // 성별
+    UiSystem::drawText(window, font, lm.get("CHAR_CREATE_GENDER"), {rx + 492.0f, 110.0f}, 14, UiTheme::textMuted());
+    m_genderRect = {rx + 492.0f, 134.0f, 260.0f, 34.0f};
+    static constexpr std::array<const char*, 4> kGenderKeys = {
+        "GENDER_MALE", "GENDER_FEMALE", "GENDER_NON_BINARY", "GENDER_UNSPECIFIED"
+    };
+    UiSystem::drawButton(window, assets, font, {
+        m_genderRect, lm.get(kGenderKeys[static_cast<std::size_t>(id.gender)]), "",
+        m_focusIndex == 2, m_genderRect.contains(mouse), true, false
+    });
+
+    // 능력치 분배 패널
+    UiSystem::drawPanel(window, assets, {rx, 240.0f, 780.0f, 326.0f}, false, 224);
+    UiSystem::drawText(window, font,
+                       lm.format("CHAR_CREATE_POINTS", {{"points", std::to_string(m_draft.remainingPoints())}}),
+                       {rx + 20.0f, 254.0f}, 16, UiTheme::textGold(), true);
+
+    const auto& sc = m_draft.abilities();
+    const std::array<int, 6> vals = {sc.strength, sc.dexterity, sc.constitution, sc.intelligence, sc.wisdom, sc.charisma};
+
+    for (int i = 0; i < 6; ++i) {
+        const float y = 294.0f + static_cast<float>(i) * 42.0f;
+        const bool foc = (m_focusIndex == 4 + i);
+        UiSystem::drawText(window, font, lm.get(kAbilityKeys[static_cast<std::size_t>(i)]),
+                           {rx + 24.0f, y + 6.0f}, 15, foc ? UiTheme::textGold() : UiTheme::textPrimary());
+        const int val = vals[static_cast<std::size_t>(i)];
+        const int mod = sc.getModifier(val);
+        const std::string modStr = (mod >= 0 ? "+" : "") + std::to_string(mod);
+        UiSystem::drawGaugeBar(window, font, {rx + 180.0f, y + 6.0f, 330.0f, 22.0f},
+                               static_cast<float>(val) / 20.0f, static_cast<float>(val) / 20.0f,
+                               UiTheme::borderGold(), UiTheme::borderGold(),
+                               std::to_string(val) + " (" + modStr + ")");
+
+        m_statMinusRects[static_cast<std::size_t>(i)] = {rx + 530.0f, y, 42.0f, 34.0f};
+        m_statPlusRects[static_cast<std::size_t>(i)] = {rx + 584.0f, y, 42.0f, 34.0f};
+        UiSystem::drawButton(window, assets, font, {
+            m_statMinusRects[static_cast<std::size_t>(i)], "-", "", false,
+            m_statMinusRects[static_cast<std::size_t>(i)].contains(mouse), true, false
+        });
+        UiSystem::drawButton(window, assets, font, {
+            m_statPlusRects[static_cast<std::size_t>(i)], "+", "", false,
+            m_statPlusRects[static_cast<std::size_t>(i)].contains(mouse), true, false
+        });
+
+        const int cost = m_draft.increaseCost(kAbilities[static_cast<std::size_t>(i)]);
+        UiSystem::drawText(window, font, "Cost: " + std::to_string(cost),
+                           {rx + 642.0f, y + 8.0f}, 13, UiTheme::textMuted());
+    }
+
+    // 하단 액션 버튼
+    m_rerollRect = {rx, 588.0f, 220.0f, 48.0f};
+    m_confirmRect = {rx + 250.0f, 588.0f, 280.0f, 48.0f};
+    m_cancelRect = {rx + 560.0f, 588.0f, 220.0f, 48.0f};
+
+    UiSystem::drawButton(window, assets, font, {m_rerollRect, lm.get("CHAR_CREATE_REROLL"), "R", m_focusIndex == 10, m_rerollRect.contains(mouse), true, false});
+    UiSystem::drawButton(window, assets, font, {m_confirmRect, lm.get("CHAR_CREATE_CONFIRM"), "Enter", m_focusIndex == 11, m_confirmRect.contains(mouse), true, true});
+    UiSystem::drawButton(window, assets, font, {m_cancelRect, lm.get("COMMON_CANCEL"), "Esc", m_focusIndex == 12, m_cancelRect.contains(mouse), true, false});
+
+    if (!m_statusMessage.empty()) {
+        UiSystem::drawText(window, font, m_statusMessage, {108.0f, 600.0f}, 14, UiTheme::hpCrimson(), true, 260.0f);
+    }
 }
 
 } // namespace crawl

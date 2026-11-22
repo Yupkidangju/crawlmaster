@@ -51,6 +51,10 @@ public:
         return normalized.has_value() && *normalized == input;
     }
 
+    static constexpr bool isValidAge(int age) {
+        return age >= 18 && age <= 80;
+    }
+
 private:
     static bool isWhitespace(std::uint32_t codePoint) {
         return codePoint == 0x20U || codePoint == 0xA0U || codePoint == 0x1680U ||

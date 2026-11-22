@@ -1,82 +1,84 @@
 #include "controller/ShutdownState.hpp"
-
+#include "core/AudioManager.hpp"
 #include "core/Game.hpp"
 #include "core/LocalizationManager.hpp"
-#include "model/Party.hpp"
+#include "view/UiSystem.hpp"
+#include "view/UiTheme.hpp"
 
 namespace crawl {
 
-ShutdownState::ShutdownState(Game& game, PersistenceStatus status)
-    : m_game(game), m_status(status) {
-    const auto& font = m_game.getFont();
-    m_title.setFont(font);
-    m_body.setFont(font);
-    m_guide.setFont(font);
-    m_title.setPosition(512.0f, 230.0f);
-    m_body.setPosition(512.0f, 340.0f);
-    m_guide.setPosition(512.0f, 470.0f);
-    refresh();
+ShutdownState::ShutdownState(Game& game, PersistenceStatus initialFailure)
+    : m_game(game), m_failureStatus(initialFailure) {
+    const auto& lm = LocalizationManager::getInstance();
+    m_statusMessage = (initialFailure == PersistenceStatus::RecoveryPending)
+                          ? lm.get("SHUTDOWN_RECOVERY_PENDING")
+                          : lm.get("SHUTDOWN_SAVE_FAILED");
 }
 
-void ShutdownState::handleInput(const sf::Event& event) {
-    if (event.type != sf::Event::KeyPressed) return;
-    if (event.key.code == sf::Keyboard::Escape) {
-        m_game.completeShutdown();
-        return;
-    }
-    if (event.key.code == sf::Keyboard::Enter) {
-        const bool retryingRecovery = m_status == PersistenceStatus::RecoveryPending;
-        const auto result = retryingRecovery
-            ? m_game.getParty().loadFromFile()
-            : m_game.getParty().saveToFile();
-        m_status = result.status;
-        if (retryingRecovery && !result.succeeded()) {
-            m_game.getParty().markRecoveryPending();
-            m_status = PersistenceStatus::RecoveryPending;
-        }
-        if ((!retryingRecovery && result.status == PersistenceStatus::Saved) ||
-            (retryingRecovery && result.succeeded())) {
+void ShutdownState::retryPrimary() {
+    const auto& lm = LocalizationManager::getInstance();
+    if (m_failureStatus == PersistenceStatus::RecoveryPending || m_game.getParty().isRecoveryPending()) {
+        const auto loadRes = m_game.getParty().loadFromFile();
+        if (loadRes) {
             m_game.completeShutdown();
             return;
         }
-        refresh();
+        m_statusMessage = lm.get("SHUTDOWN_RECOVERY_FAILED");
+        AudioManager::getInstance().playSfx("sfx_ui_error");
+        return;
+    }
+    const auto res = m_game.getParty().saveToFile();
+    if (res.status == PersistenceStatus::Saved) {
+        m_game.completeShutdown();
+        return;
+    }
+    m_statusMessage = lm.get("SHUTDOWN_SAVE_FAILED");
+    AudioManager::getInstance().playSfx("sfx_ui_error");
+}
+
+void ShutdownState::handleInput(const sf::Event& event) {
+    if (event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Left) {
+        const auto pos = m_game.mapPixelToLogical({event.mouseButton.x, event.mouseButton.y});
+        if (m_buttonRects[0].contains(pos)) { retryPrimary(); return; }
+        if (m_buttonRects[1].contains(pos)) { m_game.completeShutdown(); return; }
+        return;
+    }
+    if (event.type != sf::Event::KeyPressed) return;
+    if (event.key.code == sf::Keyboard::Enter) {
+        retryPrimary();
+    } else if (event.key.code == sf::Keyboard::Escape) {
+        m_game.completeShutdown();
     }
 }
 
 void ShutdownState::update(sf::Time /*deltaTime*/) {}
 
 void ShutdownState::draw(sf::RenderWindow& window) {
-    refresh();
-    window.draw(m_title);
-    window.draw(m_body);
-    window.draw(m_guide);
-}
-
-void ShutdownState::refresh() {
-    auto& localization = LocalizationManager::getInstance();
+    auto& assets = m_game.getAssets();
     const auto& font = m_game.getFont();
-    for (sf::Text* text : {&m_title, &m_body, &m_guide}) text->setFont(font);
-    m_title.setCharacterSize(localization.getScaledTextSize(24));
-    m_body.setCharacterSize(localization.getScaledTextSize(16));
-    m_guide.setCharacterSize(localization.getScaledTextSize(14));
-    m_title.setFillColor(sf::Color(255, 176, 0));
-    m_body.setFillColor(sf::Color(255, 102, 102));
-    m_guide.setFillColor(sf::Color(102, 255, 102));
-    m_title.setString(localization.getSf("SHUTDOWN_TITLE"));
-    const bool recoveryPending = m_status == PersistenceStatus::RecoveryPending;
-    const char* bodyKey = "SHUTDOWN_SAVE_FAILED";
-    if (recoveryPending) {
-        bodyKey = "SHUTDOWN_RECOVERY_PENDING";
-    } else if (m_status == PersistenceStatus::CommittedDurabilityUnknown) {
-        bodyKey = "SHUTDOWN_DURABILITY_UNKNOWN";
-    }
-    m_body.setString(localization.getSf(bodyKey));
-    m_guide.setString(localization.getSf(recoveryPending
-        ? "SHUTDOWN_RECOVERY_GUIDE" : "SHUTDOWN_GUIDE"));
-    for (sf::Text* text : {&m_title, &m_body, &m_guide}) {
-        const auto bounds = text->getLocalBounds();
-        text->setOrigin(bounds.left + bounds.width / 2.0f, bounds.top + bounds.height / 2.0f);
-    }
+    const auto& lm = LocalizationManager::getInstance();
+    const auto mouse = m_game.getMouseLogicalPosition();
+
+    sf::RectangleShape dim({Game::LOGICAL_WIDTH, Game::LOGICAL_HEIGHT});
+    dim.setFillColor(sf::Color(4, 4, 8, 220));
+    window.draw(dim);
+
+    const sf::FloatRect panel(290.0f, 200.0f, 700.0f, 300.0f);
+    UiSystem::drawPanel(window, assets, panel, true, 248);
+    UiSystem::drawCenteredText(window, font, lm.get("SHUTDOWN_TITLE"),
+                               {panel.left, panel.top + 24.0f, panel.width, 38.0f}, 24, UiTheme::hpCrimson(), true);
+    UiSystem::drawCenteredText(window, font, m_statusMessage,
+                               {panel.left + 28.0f, panel.top + 92.0f, panel.width - 56.0f, 74.0f},
+                               15, UiTheme::textPrimary(), true);
+
+    m_buttonRects[0] = {panel.left + 58.0f, panel.top + 210.0f, 270.0f, 50.0f};
+    m_buttonRects[1] = {panel.left + 372.0f, panel.top + 210.0f, 270.0f, 50.0f};
+    UiSystem::drawButton(window, assets, font, {
+        m_buttonRects[0], lm.get("SHUTDOWN_RETRY"), "Enter", true, m_buttonRects[0].contains(mouse), true, true
+    });
+    UiSystem::drawButton(window, assets, font, {
+        m_buttonRects[1], lm.get("SHUTDOWN_EXIT_UNSAVED"), "Esc", false, m_buttonRects[1].contains(mouse), true, false
+    });
 }
 
 } // namespace crawl

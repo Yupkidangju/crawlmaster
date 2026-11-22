@@ -1,72 +1,126 @@
-// [v0.4.0] Monster.hpp 신규 작성
-// [v0.8.0] 몬스터용 상태이상(독, 마비) 관리 인터페이스 및 턴 차감/피해 처리 구체 구현 추가.
-// 던전 전투 시 출현할 몬스터의 기본 정보 및 공격 주사위 롤러를 다루는 추상 인터페이스 및 구체 클래스 정의.
-
 #ifndef MONSTER_HPP
 #define MONSTER_HPP
 
-#include <string>
-#include <memory>
-#include <vector>
-#include "core/SessionRng.hpp"
 #include "core/LocalizationManager.hpp"
-#include "model/Character.hpp" // AbilityScore 구조체 재사용용
+#include "core/SessionRng.hpp"
+#include "model/Character.hpp"
+#include "model/Equipment.hpp"
+
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <vector>
 
 namespace crawl {
 
-// Monster 추상 클래스: 전투 참여 가능한 몬스터 대상 인터페이스 정의
+enum class EnemyIntentKind {
+    ATTACK = 0,
+    HEAVY_STRIKE = 1,
+    AOE_BREATH = 2,
+    SPELL = 3,
+    DEBUFF = 4,
+    BUFF = 5,
+    DEFEND = 6,
+    CHARGING = 7
+};
+
+struct EnemyIntent {
+    EnemyIntentKind kind = EnemyIntentKind::ATTACK;
+    DamageType damageType = DamageType::SLASHING;
+    int estimatedDamage = 4;
+    std::string labelKey = "INTENT_ATTACK";
+};
+
 class Monster {
 public:
     virtual ~Monster() = default;
 
-    // 대미지 가해 및 HP 감쇄 처리
     virtual void takeDamage(int damage) = 0;
-
-    // 공격 명중 주사위 굴림값 획득 (d20 + 보정치)
     virtual int getAttackRoll() = 0;
-
-    // 공격 피해 주사위 굴림값 획득
     virtual int getDamageRoll() = 0;
+    [[nodiscard]] virtual bool isDead() const = 0;
 
-    // 사망 여부 확인
-    virtual bool isDead() const = 0;
+    [[nodiscard]] virtual std::string getId() const = 0;
+    [[nodiscard]] virtual std::string getName() const = 0;
+    [[nodiscard]] virtual int getAc() const = 0;
+    [[nodiscard]] virtual int getXpReward() const = 0;
+    [[nodiscard]] virtual int getHp() const = 0;
+    [[nodiscard]] virtual int getMaxHp() const = 0;
+    [[nodiscard]] virtual int getTier() const = 0;
+    [[nodiscard]] virtual bool isBoss() const = 0;
+    [[nodiscard]] virtual int getPhase() const = 0;
+    virtual bool checkPhaseTransition(std::vector<std::string>& logOutput) = 0;
 
-    // Getter 함수들
-    virtual std::string getId() const = 0;
-    virtual std::string getName() const = 0;
-    virtual int getAc() const = 0;
-    virtual int getXpReward() const = 0;
-    virtual int getHp() const = 0;
-    virtual int getMaxHp() const = 0;
-    virtual int getTier() const = 0;
+    // 스태거/브레이크 & 약점/저항
+    [[nodiscard]] virtual int getMaxStagger() const = 0;
+    [[nodiscard]] virtual int getStagger() const = 0;
+    [[nodiscard]] virtual bool isBroken() const = 0;
+    [[nodiscard]] virtual int getBrokenTurns() const = 0;
+    virtual bool applyStagger(int amount) = 0;
+    virtual void recoverFromBreak() = 0;
 
-    // --- [v0.8.0] 상태이상 관리 전용 함수 정의 ---
+    [[nodiscard]] virtual const std::vector<DamageType>& getWeaknesses() const = 0;
+    [[nodiscard]] virtual const std::vector<DamageType>& getResistances() const = 0;
+    [[nodiscard]] virtual bool isWeakTo(DamageType type) const = 0;
+    [[nodiscard]] virtual bool isResistantTo(DamageType type) const = 0;
+
+    // 행동 예고(텔레그래프)
+    [[nodiscard]] virtual const EnemyIntent& getNextIntent() const = 0;
+    virtual void rollNextIntent(SessionRng& rng) = 0;
+    virtual void interruptIntent() = 0;
+
+    // 상태이상
     virtual void setPoison(int turns) = 0;
     virtual void setParalysis(int turns) = 0;
-    virtual int getPoisonTurns() const = 0;
-    virtual int getParalysisTurns() const = 0;
+    virtual void setBurn(int turns) = 0;
+    virtual void setBleed(int turns) = 0;
+    virtual void setFrost(int turns) = 0;
+    virtual void setDefending(bool defending) = 0;
+    [[nodiscard]] virtual bool isDefending() const = 0;
+    [[nodiscard]] virtual int getPoisonTurns() const = 0;
+    [[nodiscard]] virtual int getParalysisTurns() const = 0;
+    [[nodiscard]] virtual int getBurnTurns() const = 0;
+    [[nodiscard]] virtual int getBleedTurns() const = 0;
+    [[nodiscard]] virtual int getFrostTurns() const = 0;
     virtual void processTurnEffects(std::vector<std::string>& logOutput) = 0;
 };
 
-// ConcreteMonster 클래스: Monster 인터페이스를 구현하며 주사위 기반 공격력을 주입받아 구동
 class ConcreteMonster : public Monster {
 public:
-    ConcreteMonster(std::string id, std::string name, int maxHp, int ac, int xpReward,
-                    int dmgDiceCount, int dmgDiceSides, int dmgBonus, int tier = 1)
-        : m_id(std::move(id)), m_name(std::move(name)), m_hp(maxHp), m_maxHp(maxHp), m_ac(ac),
-          m_xpReward(xpReward), m_dmgDiceCount(dmgDiceCount), m_dmgDiceSides(dmgDiceSides), m_dmgBonus(dmgBonus),
+    ConcreteMonster(std::string id, std::string nameKey, int maxHp, int ac, int xpReward,
+                    int dmgDiceCount, int dmgDiceSides, int dmgBonus, int tier,
+                    int maxStagger, std::vector<DamageType> weaknesses,
+                    std::vector<DamageType> resistances, bool boss = false,
+                    DamageType primaryElement = DamageType::SLASHING)
+        : m_id(std::move(id)),
+          m_nameKey(std::move(nameKey)),
+          m_hp(maxHp),
+          m_maxHp(maxHp),
+          m_ac(ac),
+          m_xpReward(xpReward),
+          m_dmgDiceCount(dmgDiceCount),
+          m_dmgDiceSides(dmgDiceSides),
+          m_dmgBonus(dmgBonus),
           m_tier(tier),
-          m_poisonTurns(0), m_paralysisTurns(0) {}
-
-    ~ConcreteMonster() override = default;
+          m_maxStagger(std::max(2, maxStagger)),
+          m_stagger(std::max(2, maxStagger)),
+          m_weaknesses(std::move(weaknesses)),
+          m_resistances(std::move(resistances)),
+          m_boss(boss),
+          m_primaryElement(primaryElement) {
+        m_nextIntent.kind = EnemyIntentKind::ATTACK;
+        m_nextIntent.damageType = m_primaryElement;
+        m_nextIntent.estimatedDamage = std::max(1, m_dmgDiceCount * (m_dmgDiceSides / 2 + 1) + m_dmgBonus);
+        m_nextIntent.labelKey = "INTENT_ATTACK";
+    }
 
     void takeDamage(int damage) override {
+        if (damage <= 0) return;
         m_hp = std::max(0, m_hp - damage);
     }
 
     int getAttackRoll() override {
-        // 몬스터 기본 명중 주사위 굴림: 1d20 + 3 보너스 고정 적용
-        return SessionRng::global().rollDie(20) + 3;
+        return SessionRng::global().rollDie(20) + 2 + m_tier + (m_phase > 1 ? 2 : 0);
     }
 
     int getDamageRoll() override {
@@ -74,65 +128,212 @@ public:
         for (int i = 0; i < m_dmgDiceCount; ++i) {
             sum += SessionRng::global().rollDie(m_dmgDiceSides);
         }
-        return sum + m_dmgBonus;
+        return std::max(1, sum + m_dmgBonus + (m_phase > 1 ? 4 : 0));
     }
 
-    bool isDead() const override { return m_hp <= 0; }
+    [[nodiscard]] bool isDead() const override { return m_hp <= 0; }
+    [[nodiscard]] std::string getId() const override { return m_id; }
+    [[nodiscard]] std::string getName() const override {
+        return LocalizationManager::getInstance().get(m_nameKey);
+    }
+    [[nodiscard]] int getAc() const override {
+        int ac = m_ac + (m_defending ? 3 : 0) - (m_brokenTurns > 0 ? 3 : 0) - (m_frostTurns > 0 ? 1 : 0);
+        return std::max(6, ac);
+    }
+    [[nodiscard]] int getXpReward() const override { return m_xpReward; }
+    [[nodiscard]] int getHp() const override { return m_hp; }
+    [[nodiscard]] int getMaxHp() const override { return m_maxHp; }
+    [[nodiscard]] int getTier() const override { return m_tier; }
+    [[nodiscard]] bool isBoss() const override { return m_boss; }
+    [[nodiscard]] int getPhase() const override { return m_phase; }
 
-    std::string getId() const override { return m_id; }
-    std::string getName() const override { return LocalizationManager::getInstance().get(m_name); }
-    int getAc() const override { return m_ac; }
-    int getXpReward() const override { return m_xpReward; }
-    int getHp() const override { return m_hp; }
-    int getMaxHp() const override { return m_maxHp; }
-    int getTier() const override { return m_tier; }
+    bool checkPhaseTransition(std::vector<std::string>& logOutput) override {
+        if (m_id == "mon_elder_wyrm" && m_phase == 1 && !isDead() && m_hp <= m_maxHp / 2) {
+            m_phase = 2;
+            m_stagger = m_maxStagger;
+            m_brokenTurns = 0;
+            m_nextIntent.kind = EnemyIntentKind::CHARGING;
+            m_nextIntent.damageType = DamageType::FIRE;
+            m_nextIntent.estimatedDamage = 24;
+            m_nextIntent.labelKey = "INTENT_CHARGING";
+            logOutput.push_back(LocalizationManager::getInstance().get("BOSS_ELDER_WYRM_PHASE2"));
+            return true;
+        }
+        return false;
+    }
 
-    // --- [v0.8.0] 상태이상 관리 전용 함수 구현 ---
-    void setPoison(int turns) override { m_poisonTurns = turns; }
-    void setParalysis(int turns) override { m_paralysisTurns = turns; }
-    int getPoisonTurns() const override { return m_poisonTurns; }
-    int getParalysisTurns() const override { return m_paralysisTurns; }
+    [[nodiscard]] int getMaxStagger() const override { return m_maxStagger; }
+    [[nodiscard]] int getStagger() const override { return m_stagger; }
+    [[nodiscard]] bool isBroken() const override { return m_brokenTurns > 0; }
+    [[nodiscard]] int getBrokenTurns() const override { return m_brokenTurns; }
 
-    void processTurnEffects(std::vector<std::string>& logOutput) override {
-        if (m_hp <= 0) return;
+    bool applyStagger(int amount) override {
+        if (amount <= 0 || isDead() || m_brokenTurns > 0) return false;
+        m_stagger = std::max(0, m_stagger - amount);
+        if (m_stagger == 0) {
+            m_brokenTurns = 1;
+            m_defending = false;
+            interruptIntent();
+            return true;
+        }
+        return false;
+    }
 
-        // 독 상태 정산
-        if (m_poisonTurns > 0) {
-            int poisonDmg = SessionRng::global().rollDie(3);
-            takeDamage(poisonDmg);
-            logOutput.push_back(LocalizationManager::getInstance().format("STATUS_LOG_POISON_DAMAGE", {
-                {"target", getName()}, {"damage", std::to_string(poisonDmg)}}));
-            m_poisonTurns = std::max(0, m_poisonTurns - 1);
-            if (m_hp <= 0) {
-                logOutput.push_back(LocalizationManager::getInstance().format("COMBAT_LOG_DEFEATED", {
-                    {"target", getName()}}));
+    void recoverFromBreak() override {
+        if (m_brokenTurns > 0) {
+            --m_brokenTurns;
+            if (m_brokenTurns == 0) {
+                m_stagger = m_maxStagger;
             }
         }
+    }
 
-        // 마비 상태 감소
-        if (m_paralysisTurns > 0) {
-            m_paralysisTurns = std::max(0, m_paralysisTurns - 1);
+    [[nodiscard]] const std::vector<DamageType>& getWeaknesses() const override { return m_weaknesses; }
+    [[nodiscard]] const std::vector<DamageType>& getResistances() const override { return m_resistances; }
+
+    [[nodiscard]] bool isWeakTo(DamageType type) const override {
+        return std::find(m_weaknesses.begin(), m_weaknesses.end(), type) != m_weaknesses.end();
+    }
+
+    [[nodiscard]] bool isResistantTo(DamageType type) const override {
+        return std::find(m_resistances.begin(), m_resistances.end(), type) != m_resistances.end();
+    }
+
+    [[nodiscard]] const EnemyIntent& getNextIntent() const override { return m_nextIntent; }
+
+    void interruptIntent() override {
+        m_wasCharging = false;
+        m_nextIntent.kind = EnemyIntentKind::ATTACK;
+        m_nextIntent.damageType = m_primaryElement;
+        m_nextIntent.estimatedDamage = std::max(1, m_dmgDiceCount * (m_dmgDiceSides / 2 + 1) + m_dmgBonus);
+        m_nextIntent.labelKey = "INTENT_ATTACK";
+    }
+
+    void rollNextIntent(SessionRng& rng) override {
+        const int baseEst = std::max(2, m_dmgDiceCount * (m_dmgDiceSides / 2 + 1) + m_dmgBonus +
+                                     (m_phase > 1 ? 4 : 0));
+        // 직전 턴이 CHARGING이었으면 이번 턴은 광역 브레스/강타 확정 발동!
+        if (m_wasCharging) {
+            m_wasCharging = false;
+            m_nextIntent.kind = EnemyIntentKind::AOE_BREATH;
+            m_nextIntent.damageType = (m_id == "mon_bog_hydra") ? DamageType::POISON
+                                    : (m_id == "mon_ossuary_lich") ? DamageType::ARCANE
+                                    : DamageType::FIRE;
+            m_nextIntent.estimatedDamage = static_cast<int>(baseEst * 1.45f);
+            m_nextIntent.labelKey = "INTENT_AOE_BREATH";
+            return;
         }
+
+        const int r = rng.rollRange(1, 100);
+        if (m_boss && r <= (m_phase > 1 ? 42 : 30)) {
+            m_wasCharging = true;
+            m_nextIntent.kind = EnemyIntentKind::CHARGING;
+            m_nextIntent.damageType = m_primaryElement;
+            m_nextIntent.estimatedDamage = static_cast<int>(baseEst * 1.6f);
+            m_nextIntent.labelKey = "INTENT_CHARGING";
+            return;
+        }
+        if ((m_id == "mon_goblin_shaman" || m_id == "mon_ossuary_lich" ||
+             m_id == "mon_ash_cultist" || m_id == "mon_wraith") && r <= 48) {
+            m_nextIntent.kind = EnemyIntentKind::SPELL;
+            m_nextIntent.damageType = m_primaryElement;
+            m_nextIntent.estimatedDamage = baseEst + 3;
+            m_nextIntent.labelKey = "INTENT_SPELL";
+            return;
+        }
+        if ((m_id == "mon_giant_spider" || m_id == "mon_ghoul" ||
+             m_id == "mon_mire_slime" || m_id == "mon_bog_hydra") && r <= 42) {
+            m_nextIntent.kind = EnemyIntentKind::DEBUFF;
+            m_nextIntent.damageType = DamageType::POISON;
+            m_nextIntent.estimatedDamage = baseEst;
+            m_nextIntent.labelKey = "INTENT_DEBUFF";
+            return;
+        }
+        if (r <= 24) {
+            m_nextIntent.kind = EnemyIntentKind::HEAVY_STRIKE;
+            m_nextIntent.damageType = m_primaryElement;
+            m_nextIntent.estimatedDamage = static_cast<int>(baseEst * 1.4f);
+            m_nextIntent.labelKey = "INTENT_HEAVY_STRIKE";
+        } else if (r >= 88 && !m_boss) {
+            m_nextIntent.kind = EnemyIntentKind::DEFEND;
+            m_nextIntent.damageType = m_primaryElement;
+            m_nextIntent.estimatedDamage = 0;
+            m_nextIntent.labelKey = "INTENT_DEFEND";
+        } else {
+            m_nextIntent.kind = EnemyIntentKind::ATTACK;
+            m_nextIntent.damageType = m_primaryElement;
+            m_nextIntent.estimatedDamage = baseEst;
+            m_nextIntent.labelKey = "INTENT_ATTACK";
+        }
+    }
+
+    void setPoison(int turns) override { m_poisonTurns = std::max(0, turns); }
+    void setParalysis(int turns) override { m_paralysisTurns = std::max(0, turns); }
+    void setBurn(int turns) override { m_burnTurns = std::max(0, turns); }
+    void setBleed(int turns) override { m_bleedTurns = std::max(0, turns); }
+    void setFrost(int turns) override { m_frostTurns = std::max(0, turns); }
+    void setDefending(bool defending) override { m_defending = defending; }
+    [[nodiscard]] bool isDefending() const override { return m_defending; }
+    [[nodiscard]] int getPoisonTurns() const override { return m_poisonTurns; }
+    [[nodiscard]] int getParalysisTurns() const override { return m_paralysisTurns; }
+    [[nodiscard]] int getBurnTurns() const override { return m_burnTurns; }
+    [[nodiscard]] int getBleedTurns() const override { return m_bleedTurns; }
+    [[nodiscard]] int getFrostTurns() const override { return m_frostTurns; }
+
+    void processTurnEffects(std::vector<std::string>& logOutput) override {
+        if (isDead()) return;
+        m_defending = false;
+        const auto& lm = LocalizationManager::getInstance();
+
+        auto applyDot = [&](int& turns, int die, int flat, const char* key) {
+            if (turns <= 0 || isDead()) return;
+            const int dmg = SessionRng::global().rollDie(die) + flat;
+            takeDamage(dmg);
+            logOutput.push_back(lm.format(key, {
+                {"target", getName()}, {"damage", std::to_string(dmg)}}));
+            --turns;
+            if (isDead()) {
+                logOutput.push_back(lm.format("COMBAT_LOG_DEFEATED", {{"target", getName()}}));
+            }
+        };
+
+        applyDot(m_poisonTurns, 4, 1, "STATUS_LOG_POISON_DAMAGE");
+        applyDot(m_burnTurns, 5, 2, "STATUS_LOG_BURN_DAMAGE");
+        applyDot(m_bleedTurns, 4, 1, "STATUS_LOG_BLEED_DAMAGE");
+
+        if (m_paralysisTurns > 0) --m_paralysisTurns;
+        if (m_frostTurns > 0) --m_frostTurns;
     }
 
 private:
     std::string m_id;
-    std::string m_name;
+    std::string m_nameKey;
     int m_hp;
     int m_maxHp;
     int m_ac;
     int m_xpReward;
-
-    // 공격 사양
-    int m_diceCount = 1;
     int m_dmgDiceCount;
     int m_dmgDiceSides;
     int m_dmgBonus;
     int m_tier;
 
-    // [v0.8.0] 상태이상 변수
-    int m_poisonTurns;
-    int m_paralysisTurns;
+    int m_maxStagger;
+    int m_stagger;
+    int m_brokenTurns = 0;
+    std::vector<DamageType> m_weaknesses;
+    std::vector<DamageType> m_resistances;
+    bool m_boss = false;
+    int m_phase = 1;
+    DamageType m_primaryElement = DamageType::SLASHING;
+    bool m_wasCharging = false;
+    bool m_defending = false;
+    EnemyIntent m_nextIntent;
+
+    int m_poisonTurns = 0;
+    int m_paralysisTurns = 0;
+    int m_burnTurns = 0;
+    int m_bleedTurns = 0;
+    int m_frostTurns = 0;
 };
 
 } // namespace crawl

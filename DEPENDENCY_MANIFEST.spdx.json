@@ -2,23 +2,36 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "Crawlmaster-0.9.4-source-component-manifest",
+  "name": "Crawlmaster-1.0.0-source-component-manifest",
   "documentComment": "Source component manifest for immutable code dependencies and bundled fonts. CI generates an artifact-specific Syft SPDX SBOM and Grype report; platform runtime libraries remain external system requirements.",
-  "documentNamespace": "https://crawlmaster.local/spdx/Crawlmaster-0.9.4-20260903",
+  "documentNamespace": "https://crawlmaster.local/spdx/Crawlmaster-1.0.0-20261122",
   "creationInfo": {
-    "created": "2026-09-03T00:00:00Z",
-    "creators": ["Tool: Codex remediation audit"]
+    "created": "2026-11-22T00:00:00Z",
+    "creators": ["Tool: Crawlmaster v1.0.0 release manifest"]
   },
   "packages": [
     {
       "name": "Crawlmaster",
       "SPDXID": "SPDXRef-Package-Crawlmaster",
-      "versionInfo": "0.9.4",
+      "versionInfo": "1.0.0",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",
       "licenseDeclared": "NOASSERTION",
       "copyrightText": "NOASSERTION"
+    },
+    {
+      "name": "miniaudio",
+      "SPDXID": "SPDXRef-Package-miniaudio",
+      "versionInfo": "0.11.26+877ea4a7c2601c7b0f2a44e83dfac42e6470fea6",
+      "downloadLocation": "git+https://github.com/mackron/miniaudio.git@877ea4a7c2601c7b0f2a44e83dfac42e6470fea6",
+      "filesAnalyzed": false,
+      "licenseConcluded": "MIT-0 OR Unlicense",
+      "licenseDeclared": "MIT-0 OR Unlicense",
+      "copyrightText": "Copyright 2025 David Reid",
+      "externalRefs": [
+        {"referenceCategory": "PACKAGE-MANAGER", "referenceType": "purl", "referenceLocator": "pkg:github/mackron/miniaudio@877ea4a7c2601c7b0f2a44e83dfac42e6470fea6"}
+      ]
     },
     {
       "name": "SFML",
@@ -81,6 +94,7 @@
     {"spdxElementId": "SPDXRef-DOCUMENT", "relationshipType": "DESCRIBES", "relatedSpdxElement": "SPDXRef-Package-Crawlmaster"},
     {"spdxElementId": "SPDXRef-Package-Crawlmaster", "relationshipType": "DEPENDS_ON", "relatedSpdxElement": "SPDXRef-Package-SFML"},
     {"spdxElementId": "SPDXRef-Package-Crawlmaster", "relationshipType": "DEPENDS_ON", "relatedSpdxElement": "SPDXRef-Package-nlohmann-json"},
+    {"spdxElementId": "SPDXRef-Package-Crawlmaster", "relationshipType": "DEPENDS_ON", "relatedSpdxElement": "SPDXRef-Package-miniaudio"},
     {"spdxElementId": "SPDXRef-Package-Crawlmaster", "relationshipType": "CONTAINS", "relatedSpdxElement": "SPDXRef-Package-NotoSansCJK"},
     {"spdxElementId": "SPDXRef-Package-Crawlmaster", "relationshipType": "CONTAINS", "relatedSpdxElement": "SPDXRef-Package-UbuntuMono"},
     {"spdxElementId": "SPDXRef-Package-Crawlmaster", "relationshipType": "CONTAINS", "relatedSpdxElement": "SPDXRef-Package-NeoDunggeunmo"}

@@ -4,7 +4,27 @@
 
 ---
 
-## [Unreleased] - Turn 3 audit remediation
+## [1.0.0] - 2026-11-22 (AAA Dark Fantasy 3D Refactoring & Linux/Windows Release)
+
+### Added (추가됨)
+* **OpenGL/GLSL 1인칭 텍스처 3D 던전 렌더러 (`DungeonRenderer`)**: 5개 바이옴 알베도+Sobel 노멀맵, 동적 횃불 점멸 조명, 바이옴 안개, 블룸·비네트·필름 톤매핑 포스트프로세싱, 60fps 부드러운 카메라 이동/회전 보간·헤드밥·부유 입자, 그리고 GLSL 미지원 환경용 **GL 1.1 소프트웨어 텍스처 3D 폴백**(와이어프레임 완전 제거)을 구현했다.
+* **다크 판타지 회화풍 아트 에셋 파이프라인 (`scripts/build_assets.py`, `ASSET_PROVENANCE.md`)**: 81종 최적화 PNG 에셋(5바이옴 텍스처+노멀맵, 건축 문/철창/보스 게이트/계단/비밀 벽, 4인 영웅 초상화, 24종 몬스터·보스 컷아웃 스프라이트, 9종 3D 프롭, 9-슬라이스 UI 패널, 파티클, 비네트)과 3종 GLSL 셰이더(`assets/shaders/`)를 자체 완결 번들링했다.
+* **자체 완결 오디오 엔진 (`miniaudio` 0.11.26, `AudioManager`, `scripts/generate_audio.py`)**: 5곡 BGM, 5종 바이옴 환경음 루프, 24종 SFX(총 34 PCM WAV)와 마스터/BGM/SFX 볼륨·음소거 제어, 그리고 CI/Xvfb 헤드리스용 자동 `ma_backend_null` 폴백을 구현했다.
+* **5층 영속 캠페인 및 탐험 기믹 (`DungeonWorld`, `DungeonMap`)**: 5개 바이옴(1F `CATACOMBS`, 2F `CISTERN`, 3F `OSSUARY`, 4F `FOUNDRY`, 5F `SANCTUM`), 보물상자, 도적 자동 탐지·해제 함정, 단축 레버+잠긴 철창, 비밀 벽, 성소 모닥불, 로어 비석, 마을→도달 층 빠른 이동을 추가했다.
+* **전술 전투·성장·대장간·도감 시스템**: 전열/후열 진형과 무기 사거리, 9속성 상성, 스태거/브레이크 게이지와 행동 중단, 적 인텐트 예고(Telegraphing), 방어(Guard), 2페이즈 최종 보스 `mon_elder_wyrm`, Lv 1~10 성장, 8종 Lv3+ 전직, 4노드 특성 트리, 24종 스킬, 43종 아이템(5등급 희귀도/접사/`+0..+5` 대장간 강화·접사 재연마), 24종 몬스터 도감(`BestiaryState`), 8종 정식 퀘스트를 구현했다.
+* **16:9 와이드스크린 마우스+키보드 하이브리드 UI (`UiSystem`, `UiTheme`, 전 12개 Controller)**: 1280×720 논리 캔버스(창 크기 조절, 1600×900/1920×1080, `F11` 전체화면), 마우스 클릭/호버/우클릭 복귀, 464키 × 5개국어 번역 카탈로그(`scripts/generate_locales.py`), 오디오/그래픽 설정이 통합된 Config Schema v3를 구축했다.
+* **CI/CD 멀티플랫폼 릴리스 자동화 (`.github/workflows/ci.yml`)**: `v*` 태그 푸시 시 `ubuntu-24.04` 및 `windows-2022` 빌드·CTest(15개)·CPack·임의 CWD 스모크·SPDX 2.3 SBOM·Syft·Grype·SLSA/SBOM Attestation 후 Linux(`.tar.gz`) + Windows(`.zip`) GitHub Release를 자동 게시한다.
+
+### Changed (변경됨)
+* **Save Schema v5 클린 브레이크**: 5층 영속 월드·전직/특성·대장간 강화/접사·도감·8종 퀘스트 상태를 Save Schema v5로 저장하며, 구버전 `v1~v4` 세이브는 마이그레이션 대신 `Persistence::quarantine`으로 안전 격리하고 `PersistenceStatus::UnsupportedVersion` 안내를 표시한다.
+* `DEPENDENCY_MANIFEST.spdx.json`, `scripts/generate_release_sbom.py`, `THIRD_PARTY_NOTICES.md`, `licenses/miniaudio-MIT-0.txt`를 `v1.0.0` 및 `miniaudio` 0.11.26 포함 구성으로 갱신했다.
+
+### Removed (제거됨)
+* 구형 1인칭 와이어프레임 렌더러 및 `v1~v4` 레거시 세이브 마이그레이션 코드를 제거했다.
+
+---
+
+## [0.10.0] - Pre-1.0 Historical Audit Remediation
 
 ### 0.10.0 persistent world and objective quests
 * 새 게임에 귀속되는 3층 20x20 던전과 save schema v4 전체 월드 snapshot을 추가했다.

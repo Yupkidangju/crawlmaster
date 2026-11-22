@@ -1,5 +1,4 @@
 #include "view/PartyHudSnapshot.hpp"
-
 #include "model/Party.hpp"
 
 namespace crawl {
@@ -14,19 +13,33 @@ const std::vector<PartyHudSlot>& PartyHudSnapshot::slots() const noexcept {
 PartyHudSnapshot buildPartyHudSnapshot(const Party& party) {
     std::vector<PartyHudSlot> slots;
     slots.reserve(static_cast<std::size_t>(party.getMemberCount()));
-    for (int index = 0; index < party.getMemberCount(); ++index) {
-        const auto member = party.getMember(index);
-        if (!member) continue;
-        slots.push_back({
-            static_cast<std::size_t>(index + 1),
-            member->getName(),
-            member->getClass(),
-            member->getHp(),
-            member->getMaxHp(),
-            member->isDead(),
-            member->getPoisonTurns(),
-            member->getParalysisTurns(),
-            member->getBlessTurns()
+    for (int i = 0; i < party.getMemberCount(); ++i) {
+        const auto m = party.getMember(i);
+        if (!m) continue;
+        slots.push_back(PartyHudSlot{
+            static_cast<std::size_t>(i + 1),
+            m->getName(),
+            m->getClass(),
+            m->getClassSlug(),
+            m->getSpecialization(),
+            m->getRow(),
+            m->getLevel(),
+            m->getHp(),
+            m->getMaxHp(),
+            m->getSpellSlots(),
+            m->getMaxSpellSlots(),
+            m->getAc(),
+            m->isDead(),
+            m->isGuarding(),
+            m->getPoisonTurns(),
+            m->getParalysisTurns(),
+            m->getBurnTurns(),
+            m->getBleedTurns(),
+            m->getFrostTurns(),
+            m->getBlessTurns(),
+            m->getWardTurns(),
+            m->getTauntTurns(),
+            m->getTalentPoints()
         });
     }
     return PartyHudSnapshot(std::move(slots));

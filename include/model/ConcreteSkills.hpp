@@ -1,214 +1,261 @@
-// [v0.8.0] ConcreteSkills.hpp 신규 작성
-// 전사, 마법사, 도적, 성직자의 12종 액티브 스킬 및 주문 구체 클래스 정의.
-
 #ifndef CONCRETE_SKILLS_HPP
 #define CONCRETE_SKILLS_HPP
 
+#include "core/LocalizationManager.hpp"
+#include "core/SessionRng.hpp"
+#include "model/Character.hpp"
+#include "model/CombatRules.hpp"
+#include "model/Monster.hpp"
 #include "model/Skill.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <string>
 
 namespace crawl {
 
-// ==================== 1. 전사 스킬 (Warrior Skills) ====================
-
-// Slash: 1d8 + STR + 2 물리 피해 및 명중 +4 가산 보정 스킬 (Lv.1)
-class SlashSkill : public Skill {
-public:
-    std::string getId() const override { return "skl_slash"; }
-    int getRequiredLevel() const override { return 1; }
-    bool isSpell() const override { return false; }
-    int getSpellLevel() const override { return 0; }
-    SkillTargetType getTargetType() const override { return SkillTargetType::SINGLE_FOE; }
-
-    bool execute(Character& caster,
-                 std::vector<std::shared_ptr<Character>>& allies,
-                 std::vector<std::shared_ptr<Monster>>& foes,
-                 int targetIdx,
-                 std::vector<std::string>& logOutput) override;
+// 데이터 드리븐 통합 전술 스킬/주문 구현:
+// 24종 직업/전직 스킬이 모두 CombatRules(약점·스태거·브레이크·진형·치명타·생명력흡수)를 공유한다.
+struct SkillSpec {
+    std::string id;
+    int reqLevel = 1;
+    bool isSpell = false;
+    int spellLevel = 0;
+    SkillTargetType target = SkillTargetType::SINGLE_FOE;
+    DamageType damageType = DamageType::SLASHING;
+    bool usesWeapon = false;
+    bool guaranteedHit = false;
+    bool requiresShield = false;
+    int attackBonus = 0;
+    int diceCount = 1;
+    int diceSides = 6;
+    int flatBonus = 0;
+    int baseStagger = 1;
+    // 효과 플래그
+    bool isHeal = false;
+    bool isRevive = false;
+    bool curesDebuffs = false;
+    bool appliesBless = false;
+    bool appliesWard = false;
+    bool appliesTaunt = false;
+    bool appliesStrBuff = false;
+    bool appliesDexBuff = false;
+    bool inflictsPoison = false;
+    bool inflictsBurn = false;
+    bool inflictsBleed = false;
+    bool inflictsFrost = false;
+    bool inflictsParalysis = false;
+    bool bonusVsBrokenOrLowHp = false;
+    bool extraLifesteal = false;
 };
 
-// Shield Bash: 방패 타격 1d4 + STR 피해 및 50% 확률로 1턴 마비 기절 유발 (Lv.2)
-class ShieldBashSkill : public Skill {
+class TacticalSkill : public Skill {
 public:
-    std::string getId() const override { return "skl_shield_bash"; }
-    int getRequiredLevel() const override { return 2; }
-    bool isSpell() const override { return false; }
-    int getSpellLevel() const override { return 0; }
-    SkillTargetType getTargetType() const override { return SkillTargetType::SINGLE_FOE; }
+    explicit TacticalSkill(SkillSpec spec) : m_spec(std::move(spec)) {}
+
+    [[nodiscard]] std::string getId() const override { return m_spec.id; }
+    [[nodiscard]] int getRequiredLevel() const override { return m_spec.reqLevel; }
+    [[nodiscard]] bool isSpell() const override { return m_spec.isSpell; }
+    [[nodiscard]] int getSpellLevel() const override { return m_spec.spellLevel; }
+    [[nodiscard]] SkillTargetType getTargetType() const override { return m_spec.target; }
+    [[nodiscard]] DamageType getDamageType() const override { return m_spec.damageType; }
+    [[nodiscard]] int getBaseStagger() const override { return m_spec.baseStagger; }
 
     bool execute(Character& caster,
                  std::vector<std::shared_ptr<Character>>& allies,
                  std::vector<std::shared_ptr<Monster>>& foes,
                  int targetIdx,
-                 std::vector<std::string>& logOutput) override;
-};
+                 std::vector<std::string>& logOutput) override {
+        const auto& lm = LocalizationManager::getInstance();
+        auto& rng = SessionRng::global();
 
-// Cleave: 적 전체 휩쓸기 1d6 + STR 대미지 (Lv.3)
-class CleaveSkill : public Skill {
-public:
-    std::string getId() const override { return "skl_cleave"; }
-    int getRequiredLevel() const override { return 3; }
-    bool isSpell() const override { return false; }
-    int getSpellLevel() const override { return 0; }
-    SkillTargetType getTargetType() const override { return SkillTargetType::ALL_FOES; }
+        if (m_spec.requiresShield && !caster.getEquippedItem(EquipSlot::SHIELD)) {
+            logOutput.push_back(lm.get("SKILL_LOG_SHIELD_REQUIRED"));
+            return false;
+        }
+        if (m_spec.isSpell && caster.getSpellSlots() <= 0) {
+            logOutput.push_back(lm.get("SKILL_LOG_NO_SLOTS"));
+            return false;
+        }
 
-    bool execute(Character& caster,
-                 std::vector<std::shared_ptr<Character>>& allies,
-                 std::vector<std::shared_ptr<Monster>>& foes,
-                 int targetIdx,
-                 std::vector<std::string>& logOutput) override;
-};
+        // === 1. 치유 / 부활 / 버프형 스킬 ===
+        if (m_spec.isHeal || m_spec.isRevive || m_spec.appliesBless || m_spec.appliesWard ||
+            m_spec.appliesTaunt || m_spec.appliesStrBuff || m_spec.appliesDexBuff) {
+            if (m_spec.target == SkillTargetType::SINGLE_ALLY) {
+                if (targetIdx < 0 || targetIdx >= static_cast<int>(allies.size()) || !allies[static_cast<std::size_t>(targetIdx)]) {
+                    return false;
+                }
+                auto& ally = *allies[static_cast<std::size_t>(targetIdx)];
+                if (m_spec.isRevive) {
+                    if (!ally.isDead() && ally.getHp() >= ally.getMaxHp() && !ally.hasAnyDebuff()) {
+                        logOutput.push_back(lm.get("COMBAT_LOG_ITEM_NO_EFFECT"));
+                        return false;
+                    }
+                    const int amt = std::max(10, ally.getMaxHp() * 65 / 100 + CombatRules::healingBonus(caster));
+                    if (ally.isDead()) ally.revive(amt);
+                    else ally.heal(amt);
+                    ally.cureAllDebuffs();
+                    logOutput.push_back(lm.format("SKILL_LOG_REVIVE", {
+                        {"caster", caster.getName()}, {"target", ally.getName()}, {"amount", std::to_string(amt)}}));
+                } else {
+                    if (ally.isDead()) return false;
+                    if (m_spec.isHeal && ally.getHp() >= ally.getMaxHp() && (!m_spec.curesDebuffs || !ally.hasAnyDebuff())) {
+                        logOutput.push_back(lm.get("COMBAT_LOG_ITEM_NO_EFFECT"));
+                        return false;
+                    }
+                    int total = m_spec.flatBonus + CombatRules::healingBonus(caster);
+                    for (int i = 0; i < m_spec.diceCount; ++i) total += rng.rollDie(m_spec.diceSides);
+                    total = std::max(2, total);
+                    ally.heal(total);
+                    if (m_spec.curesDebuffs) ally.cureAllDebuffs();
+                    logOutput.push_back(lm.format("SKILL_LOG_HEAL", {
+                        {"caster", caster.getName()}, {"skill", getName()},
+                        {"target", ally.getName()}, {"amount", std::to_string(total)}}));
+                }
+                if (m_spec.isSpell) caster.consumeSpellSlot();
+                return true;
+            }
 
+            if (m_spec.target == SkillTargetType::ALL_ALLIES || m_spec.target == SkillTargetType::SELF) {
+                if (m_spec.isHeal) {
+                    bool anyNeeds = false;
+                    for (const auto& a : allies) {
+                        if (a && !a->isDead() && (a->getHp() < a->getMaxHp() || (m_spec.curesDebuffs && a->hasAnyDebuff()))) {
+                            anyNeeds = true;
+                        }
+                    }
+                    if (!anyNeeds) {
+                        logOutput.push_back(lm.get("COMBAT_LOG_ITEM_NO_EFFECT"));
+                        return false;
+                    }
+                }
 
-// ==================== 2. 마법사 주문 (Mage Spells) ====================
+                for (auto& a : allies) {
+                    if (!a || a->isDead()) continue;
+                    if (m_spec.target == SkillTargetType::SELF && a.get() != &caster) continue;
+                    if (m_spec.isHeal) {
+                        int total = m_spec.flatBonus + CombatRules::healingBonus(caster);
+                        for (int i = 0; i < m_spec.diceCount; ++i) total += rng.rollDie(m_spec.diceSides);
+                        a->heal(std::max(2, total));
+                        if (m_spec.curesDebuffs) a->cureAllDebuffs();
+                    }
+                    if (m_spec.appliesBless) a->applyBless(4);
+                    if (m_spec.appliesWard) a->applyWard(3);
+                    if (m_spec.appliesStrBuff) a->applyStrBuff(3, 3);
+                    if (m_spec.appliesDexBuff) a->applyDexBuff(3, 3);
+                }
+                if (m_spec.appliesTaunt) {
+                    caster.setTaunt(3);
+                    caster.setGuarding(true);
+                }
+                logOutput.push_back(lm.format("SKILL_LOG_BUFF_PARTY", {
+                    {"caster", caster.getName()}, {"skill", getName()}}));
+                if (m_spec.isSpell) caster.consumeSpellSlot();
+                return true;
+            }
+        }
 
-// Magic Missile: 100% 명중하는 1d4 + INT + 1 마법 피해 주문 (Lv.1)
-class MagicMissileSpell : public Skill {
-public:
-    std::string getId() const override { return "spl_magic_missile"; }
-    int getRequiredLevel() const override { return 1; }
-    bool isSpell() const override { return true; }
-    int getSpellLevel() const override { return 1; }
-    SkillTargetType getTargetType() const override { return SkillTargetType::SINGLE_FOE; }
+        // === 2. 공격형 단일 / 광역 스킬 및 주문 ===
+        std::vector<std::shared_ptr<Monster>> targets;
+        if (m_spec.target == SkillTargetType::ALL_FOES) {
+            for (auto& f : foes) {
+                if (f && !f->isDead()) targets.push_back(f);
+            }
+        } else {
+            if (targetIdx < 0 || targetIdx >= static_cast<int>(foes.size()) ||
+                !foes[static_cast<std::size_t>(targetIdx)] ||
+                foes[static_cast<std::size_t>(targetIdx)]->isDead()) {
+                return false;
+            }
+            targets.push_back(foes[static_cast<std::size_t>(targetIdx)]);
+        }
+        if (targets.empty()) return false;
 
-    bool execute(Character& caster,
-                 std::vector<std::shared_ptr<Character>>& allies,
-                 std::vector<std::shared_ptr<Monster>>& foes,
-                 int targetIdx,
-                 std::vector<std::string>& logOutput) override;
-};
+        if (m_spec.isSpell) caster.consumeSpellSlot();
 
-// Sleep: 적 한 명에게 2턴간 마비(수면) 효과를 유발하는 주문 (Lv.2)
-class SleepSpell : public Skill {
-public:
-    std::string getId() const override { return "spl_sleep"; }
-    int getRequiredLevel() const override { return 2; }
-    bool isSpell() const override { return true; }
-    int getSpellLevel() const override { return 1; }
-    SkillTargetType getTargetType() const override { return SkillTargetType::SINGLE_FOE; }
+        const auto weapon = caster.getEquippedItem(EquipSlot::WEAPON);
+        const DamageType dmgType = (m_spec.usesWeapon && weapon) ? weapon->getDamageType() : m_spec.damageType;
+        const WeaponReach reach = (m_spec.usesWeapon && weapon) ? weapon->getReach() : WeaponReach::RANGED;
 
-    bool execute(Character& caster,
-                 std::vector<std::shared_ptr<Character>>& allies,
-                 std::vector<std::shared_ptr<Monster>>& foes,
-                 int targetIdx,
-                 std::vector<std::string>& logOutput) override;
-};
+        for (auto& foe : targets) {
+            bool hit = m_spec.guaranteedHit;
+            bool crit = false;
+            if (!hit) {
+                const int nat = rng.rollDie(20);
+                const auto res = CombatRules::resolveAttack(caster, nat, foe->getAc(), m_spec.attackBonus);
+                hit = (res.outcome != HitOutcome::MISS);
+                crit = (res.outcome == HitOutcome::CRITICAL);
+            }
+            if (!hit) {
+                logOutput.push_back(lm.format("SKILL_LOG_MISS", {
+                    {"caster", caster.getName()}, {"skill", getName()}, {"target", foe->getName()}}));
+                continue;
+            }
 
-// Fireball: 적 전체에게 폭발적 파이어볼을 투사하여 2d6 + INT 화염 피해 주문 (Lv.3)
-class FireballSpell : public Skill {
-public:
-    std::string getId() const override { return "spl_fireball"; }
-    int getRequiredLevel() const override { return 3; }
-    bool isSpell() const override { return true; }
-    int getSpellLevel() const override { return 2; }
-    SkillTargetType getTargetType() const override { return SkillTargetType::ALL_FOES; }
+            int rawDmg = 0;
+            if (m_spec.usesWeapon) {
+                const int diceCnt = weapon ? weapon->getDamageDiceCount() : 1;
+                const int diceSides = weapon ? weapon->getDamageDiceSides() : 4;
+                const int upgBonus = weapon ? weapon->getUpgradeDamageBonus() : 0;
+                const int abMod = CombatRules::attackAbilityModifier(caster);
+                rawDmg = CombatRules::rollAttackDamage(
+                    diceCnt, diceSides, abMod, m_spec.flatBonus + upgBonus,
+                    m_spec.diceCount, m_spec.diceSides, crit, rng);
+                rawDmg = std::max(1, static_cast<int>(std::round(
+                    static_cast<float>(rawDmg) * CombatRules::rowAttackMultiplier(caster.getRow(), reach))));
+            } else {
+                const int spBonus = CombatRules::spellDamageBonus(caster);
+                rawDmg = CombatRules::rollAttackDamage(
+                    m_spec.diceCount, m_spec.diceSides, spBonus, m_spec.flatBonus, 0, 0, crit, rng);
+            }
 
-    bool execute(Character& caster,
-                 std::vector<std::shared_ptr<Character>>& allies,
-                 std::vector<std::shared_ptr<Monster>>& foes,
-                 int targetIdx,
-                 std::vector<std::string>& logOutput) override;
-};
+            if (m_spec.bonusVsBrokenOrLowHp && (foe->isBroken() || foe->getHp() <= foe->getMaxHp() / 2)) {
+                rawDmg = static_cast<int>(std::round(static_cast<float>(rawDmg) * 1.6f));
+            }
 
+            const auto tac = CombatRules::applyTacticalDamage(
+                caster, *foe, dmgType, rawDmg, m_spec.baseStagger, true);
 
-// ==================== 3. 도적 스킬 (Rogue Skills) ====================
+            if (m_spec.extraLifesteal && !caster.isDead()) {
+                caster.heal(std::max(2, tac.finalDamage * 35 / 100));
+            }
 
-// Sneak Attack: DEX 보정 기습 물리 피해 1d4 + 2d4 + DEX (Lv.1)
-class SneakAttackSkill : public Skill {
-public:
-    std::string getId() const override { return "skl_sneak_attack"; }
-    int getRequiredLevel() const override { return 1; }
-    bool isSpell() const override { return false; }
-    int getSpellLevel() const override { return 0; }
-    SkillTargetType getTargetType() const override { return SkillTargetType::SINGLE_FOE; }
+            std::string suffix;
+            if (crit) suffix += " [CRIT]";
+            if (tac.hitWeakness) suffix += " [WEAK]";
+            if (tac.hitResistance) suffix += " [RESIST]";
+            if (tac.triggeredBreak) suffix += " [BREAK!]";
 
-    bool execute(Character& caster,
-                 std::vector<std::shared_ptr<Character>>& allies,
-                 std::vector<std::shared_ptr<Monster>>& foes,
-                 int targetIdx,
-                 std::vector<std::string>& logOutput) override;
-};
+            logOutput.push_back(lm.format("SKILL_LOG_HIT", {
+                {"caster", caster.getName()}, {"skill", getName()}, {"target", foe->getName()},
+                {"damage", std::to_string(tac.finalDamage) + suffix}}));
 
-// Poison Dart: 적 단일 대상 1d4 관통 피해 및 3턴간 매턴 독 피해(1d3) 디버프 유발 (Lv.2)
-class PoisonDartSkill : public Skill {
-public:
-    std::string getId() const override { return "skl_poison_dart"; }
-    int getRequiredLevel() const override { return 2; }
-    bool isSpell() const override { return false; }
-    int getSpellLevel() const override { return 0; }
-    SkillTargetType getTargetType() const override { return SkillTargetType::SINGLE_FOE; }
+            if (!foe->isDead()) {
+                if (m_spec.inflictsPoison) foe->setPoison(3);
+                if (m_spec.inflictsBurn) foe->setBurn(3);
+                if (m_spec.inflictsBleed) foe->setBleed(3);
+                if (m_spec.inflictsFrost) foe->setFrost(3);
+                if (m_spec.inflictsParalysis && rng.rollRange(1, 100) <= 65) foe->setParalysis(1);
+                foe->checkPhaseTransition(logOutput);
+            } else {
+                logOutput.push_back(lm.format("COMBAT_LOG_DEFEATED", {{"target", foe->getName()}}));
+            }
+        }
 
-    bool execute(Character& caster,
-                 std::vector<std::shared_ptr<Character>>& allies,
-                 std::vector<std::shared_ptr<Monster>>& foes,
-                 int targetIdx,
-                 std::vector<std::string>& logOutput) override;
-};
+        // 복합 아군 부가 효과 (예: 성기사 Radiant Aegis / 시공간술사 Time Fracture)
+        if (m_spec.appliesWard || m_spec.appliesBless) {
+            for (auto& a : allies) {
+                if (!a || a->isDead()) continue;
+                if (m_spec.appliesWard) a->applyWard(2);
+                if (m_spec.appliesBless) a->applyBless(2);
+            }
+        }
 
-// Shadowstrike: 적 1명에게 강력한 DEX 기반 은신 일격 1d8 + 3d4 + DEX 피해 (Lv.3)
-class ShadowstrikeSkill : public Skill {
-public:
-    std::string getId() const override { return "skl_shadowstrike"; }
-    int getRequiredLevel() const override { return 3; }
-    bool isSpell() const override { return false; }
-    int getSpellLevel() const override { return 0; }
-    SkillTargetType getTargetType() const override { return SkillTargetType::SINGLE_FOE; }
+        return true;
+    }
 
-    bool execute(Character& caster,
-                 std::vector<std::shared_ptr<Character>>& allies,
-                 std::vector<std::shared_ptr<Monster>>& foes,
-                 int targetIdx,
-                 std::vector<std::string>& logOutput) override;
-};
-
-
-// ==================== 4. 성직자 주문 (Cleric Spells) ====================
-
-// Cure Wounds: 가장 체력 비율이 낮은 아군 1명을 1d8 + WIS 수치만큼 치유 주문 (Lv.1)
-class CureWoundsSpell : public Skill {
-public:
-    std::string getId() const override { return "spl_cure_wounds"; }
-    int getRequiredLevel() const override { return 1; }
-    bool isSpell() const override { return true; }
-    int getSpellLevel() const override { return 1; }
-    SkillTargetType getTargetType() const override { return SkillTargetType::SINGLE_ALLY; }
-
-    bool execute(Character& caster,
-                 std::vector<std::shared_ptr<Character>>& allies,
-                 std::vector<std::shared_ptr<Monster>>& foes,
-                 int targetIdx,
-                 std::vector<std::string>& logOutput) override;
-};
-
-// Bless: 아군 전체에게 3턴간 축복 버프(공격 명중 롤 +2 가산) 주문 (Lv.2)
-class BlessSpell : public Skill {
-public:
-    std::string getId() const override { return "spl_bless"; }
-    int getRequiredLevel() const override { return 2; }
-    bool isSpell() const override { return true; }
-    int getSpellLevel() const override { return 1; }
-    SkillTargetType getTargetType() const override { return SkillTargetType::ALL_ALLIES; }
-
-    bool execute(Character& caster,
-                 std::vector<std::shared_ptr<Character>>& allies,
-                 std::vector<std::shared_ptr<Monster>>& foes,
-                 int targetIdx,
-                 std::vector<std::string>& logOutput) override;
-};
-
-// Prayer of Healing: 아군 전체 2d6 + WIS HP 일괄 치유 주문 (Lv.3)
-class PrayerOfHealingSpell : public Skill {
-public:
-    std::string getId() const override { return "spl_prayer_of_healing"; }
-    int getRequiredLevel() const override { return 3; }
-    bool isSpell() const override { return true; }
-    int getSpellLevel() const override { return 2; }
-    SkillTargetType getTargetType() const override { return SkillTargetType::ALL_ALLIES; }
-
-    bool execute(Character& caster,
-                 std::vector<std::shared_ptr<Character>>& allies,
-                 std::vector<std::shared_ptr<Monster>>& foes,
-                 int targetIdx,
-                 std::vector<std::string>& logOutput) override;
+private:
+    SkillSpec m_spec;
 };
 
 } // namespace crawl

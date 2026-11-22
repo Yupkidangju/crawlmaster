@@ -1,20 +1,17 @@
-// [v0.9.2] LocalizationManager.cpp 수정: 기본 설정 볼륨값을 BGM 60, SFX 80으로 정렬 및 getSf 헬퍼 구현, config 키 camelCase 변환.
-// assets/lang/ 하위의 JSON 언어 데이터를 동적 파싱하여 다국어를 런타임에 서비스하고 config.json 설정을 관리하는 기능 구현.
-
 #include "core/LocalizationManager.hpp"
+#include "core/AudioManager.hpp"
 #include "core/ResourceLocator.hpp"
+
+#include <algorithm>
+#include <cctype>
 #include <fstream>
 #include <iostream>
 #include <nlohmann/json.hpp>
-#include <algorithm>
-#include <cctype>
 #include <stdexcept>
 
 namespace crawl {
 
-LocalizationManager::LocalizationManager()
-    : m_currentLang(Language::KO), m_textScale(100), m_highContrast(true) {
-    // 1. 기본 번역 로드
+LocalizationManager::LocalizationManager() {
     loadTranslations();
 }
 
@@ -28,9 +25,7 @@ void LocalizationManager::setLanguage(Language lang) {
     loadTranslations();
 }
 
-Language LocalizationManager::getLanguage() const {
-    return m_currentLang;
-}
+Language LocalizationManager::getLanguage() const { return m_currentLang; }
 
 std::string LocalizationManager::getLanguageString() const {
     return getLangFileSuffix(m_currentLang);
@@ -48,16 +43,12 @@ std::string LocalizationManager::getLanguageName(Language lang) const {
 }
 
 std::string LocalizationManager::get(const std::string& key) const {
-    auto it = m_translations.find(key);
-    if (it != m_translations.end()) {
-        return it->second;
-    }
-    // 키가 존재하지 않으면 디버깅이 수월하도록 키 자체를 반환
-    return key;
+    const auto it = m_translations.find(key);
+    return (it != m_translations.end()) ? it->second : key;
 }
 
 sf::String LocalizationManager::getSf(const std::string& key) const {
-    std::string utf8Str = get(key);
+    const std::string utf8Str = get(key);
     return sf::String::fromUtf8(utf8Str.begin(), utf8Str.end());
 }
 
@@ -84,19 +75,18 @@ std::string LocalizationManager::getContent(const std::string& category,
                                             const std::string& id,
                                             const std::string& field) const {
     std::string key = category + "_" + id + "_" + field;
-    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char character) {
-        return static_cast<char>(std::toupper(character));
+    std::transform(key.begin(), key.end(), key.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::toupper(ch));
     });
     return get(key);
 }
 
 void LocalizationManager::loadTranslations() {
-    std::string filename = ResourceLocator::assetPath(
+    const std::string filename = ResourceLocator::assetPath(
         "lang/" + getLangFileSuffix(m_currentLang) + ".json").string();
-    
     std::ifstream file(filename);
     if (!file.is_open()) {
-        std::cerr << "[i18n Error] 번역 리소스 파일을 로드할 수 없습니다: " << filename << std::endl;
+        std::cerr << "[i18n Error] Failed to load locale file: " << filename << std::endl;
         m_translations.clear();
         return;
     }
@@ -109,7 +99,7 @@ void LocalizationManager::loadTranslations() {
             m_translations[key] = value.get<std::string>();
         }
     } catch (const std::exception& e) {
-        std::cerr << "[i18n Parse Error] JSON 파싱 중 예외 발생: " << e.what() << std::endl;
+        std::cerr << "[i18n Parse Error] " << e.what() << std::endl;
     }
 }
 
@@ -129,43 +119,85 @@ PersistenceResult LocalizationManager::loadConfig(const std::string& filepath) {
                                 PersistenceStatus successStatus) -> PersistenceResult {
         std::error_code sizeError;
         if (!std::filesystem::exists(candidate)) {
-            return {PersistenceStatus::NotFound, candidate, "설정 파일이 없습니다."};
+            return {PersistenceStatus::NotFound, candidate, "Config file not found."};
         }
         const auto fileSize = std::filesystem::file_size(candidate, sizeError);
         if (sizeError) return {PersistenceStatus::IoError, candidate, sizeError.message()};
         if (fileSize > 256U * 1024U) {
-            return {PersistenceStatus::Corrupt, candidate, "config 파일이 256 KiB 제한을 초과했습니다."};
+            return {PersistenceStatus::Corrupt, candidate, "Config exceeds 256 KiB limit."};
         }
 
         std::ifstream file(candidate, std::ios::binary);
         if (!file.is_open()) {
-            return {PersistenceStatus::IoError, candidate, "설정 파일을 읽을 수 없습니다."};
+            return {PersistenceStatus::IoError, candidate, "Unable to open config file."};
         }
 
         try {
             nlohmann::json j;
             file >> j;
-            if (!j.is_object()) throw std::runtime_error("config 루트는 객체여야 합니다.");
+            if (!j.is_object()) throw std::runtime_error("config root must be an object");
             const int schemaVersion = j.value("schemaVersion", 1);
-            if (schemaVersion < 1 || schemaVersion > 2) {
+            if (schemaVersion < 1 || schemaVersion > CONFIG_SCHEMA_VERSION) {
                 return {PersistenceStatus::UnsupportedVersion, candidate,
-                        "지원하지 않는 config schema입니다."};
+                        "Unsupported config schema version."};
             }
+
             const int languageValue = j.value("language", 0);
             if (languageValue < 0 || languageValue > 4) {
-                throw std::runtime_error("language 범위를 벗어났습니다.");
+                throw std::runtime_error("language out of range");
             }
-            const int textScale = schemaVersion == 2 ? j.value("textScale", 100) : 100;
+            const int textScale = schemaVersion >= 2 ? j.value("textScale", 100) : 100;
             if (textScale < 75 || textScale > 200) {
-                throw std::runtime_error("textScale 범위를 벗어났습니다.");
+                throw std::runtime_error("textScale out of range");
             }
-            const bool highContrast = schemaVersion == 2 ? j.value("highContrast", true) : true;
+            const bool highContrast = schemaVersion >= 2 ? j.value("highContrast", false) : false;
+
+            int windowWidth = 1280;
+            int windowHeight = 720;
+            bool fullscreen = false;
+            int graphicsQuality = 1;
+            int masterVolume = 80;
+            int bgmVolume = 65;
+            int sfxVolume = 85;
+            bool muted = false;
+
+            if (schemaVersion >= 3) {
+                windowWidth = j.value("windowWidth", 1280);
+                windowHeight = j.value("windowHeight", 720);
+                if (windowWidth < 960 || windowWidth > 3840 || windowHeight < 540 || windowHeight > 2160) {
+                    throw std::runtime_error("window resolution out of range");
+                }
+                fullscreen = j.value("fullscreen", false);
+                graphicsQuality = j.value("graphicsQuality", 1);
+                if (graphicsQuality < 0 || graphicsQuality > 1) {
+                    throw std::runtime_error("graphicsQuality out of range");
+                }
+                masterVolume = j.value("masterVolume", 80);
+                bgmVolume = j.value("bgmVolume", 65);
+                sfxVolume = j.value("sfxVolume", 85);
+                if (masterVolume < 0 || masterVolume > 100 ||
+                    bgmVolume < 0 || bgmVolume > 100 ||
+                    sfxVolume < 0 || sfxVolume > 100) {
+                    throw std::runtime_error("audio volume out of range");
+                }
+                muted = j.value("muted", false);
+            }
 
             m_currentLang = static_cast<Language>(languageValue);
             m_textScale = textScale;
             m_highContrast = highContrast;
+            m_windowWidth = windowWidth;
+            m_windowHeight = windowHeight;
+            m_fullscreen = fullscreen;
+            m_graphicsQuality = graphicsQuality;
+            m_masterVolume = masterVolume;
+            m_bgmVolume = bgmVolume;
+            m_sfxVolume = sfxVolume;
+            m_muted = muted;
+
             loadTranslations();
-            std::cout << "[Config] 전역 설정을 성공적으로 불러왔습니다." << std::endl;
+            AudioManager::getInstance().applyVolumeConfig(
+                m_masterVolume, m_bgmVolume, m_sfxVolume, m_muted);
             return {successStatus, candidate, {}};
         } catch (const std::exception& exception) {
             return {PersistenceStatus::Corrupt, candidate, exception.what()};
@@ -183,8 +215,8 @@ PersistenceResult LocalizationManager::loadConfig(const std::string& filepath) {
                                       std::istreambuf_iterator<char>()};
         const auto restoreResult = Persistence::atomicWriteText(primary, backupBytes);
         backupResult.message = restoreResult
-            ? "백업 config를 로드하고 primary를 복원했습니다."
-            : "백업 config는 로드했지만 primary 복원에 실패했습니다: " + restoreResult.message;
+            ? "Recovered config from backup."
+            : "Recovered backup in memory but failed to restore primary: " + restoreResult.message;
         return backupResult;
     };
 
@@ -199,33 +231,31 @@ PersistenceResult LocalizationManager::loadConfig(const std::string& filepath) {
 
     auto backupResult = recoverBackup();
     if (backupResult) {
-        backupResult.message = "손상 설정을 격리하고 백업을 복구했습니다.";
+        backupResult.message = "Quarantined corrupt config and recovered backup.";
         return backupResult;
     }
 
-    std::cerr << "[Config Load Error] 손상 설정을 격리했습니다: " << primaryResult.message << std::endl;
     return {PersistenceStatus::Corrupt, quarantinePath, primaryResult.message};
 }
 
 PersistenceResult LocalizationManager::saveConfig(const std::string& filepath) const {
     try {
         nlohmann::json j;
-        j["schemaVersion"] = 2;
+        j["schemaVersion"] = CONFIG_SCHEMA_VERSION;
         j["language"] = static_cast<int>(m_currentLang);
         j["textScale"] = m_textScale;
         j["highContrast"] = m_highContrast;
+        j["windowWidth"] = m_windowWidth;
+        j["windowHeight"] = m_windowHeight;
+        j["fullscreen"] = m_fullscreen;
+        j["graphicsQuality"] = m_graphicsQuality;
+        j["masterVolume"] = m_masterVolume;
+        j["bgmVolume"] = m_bgmVolume;
+        j["sfxVolume"] = m_sfxVolume;
+        j["muted"] = m_muted;
 
-        auto result = Persistence::atomicWriteText(filepath, j.dump(4));
-        if (result.status == PersistenceStatus::CommittedDurabilityUnknown) {
-            std::cerr << "[Config Save Warning] " << result.message << std::endl;
-        } else if (result) {
-            std::cout << "[Config] 전역 설정을 성공적으로 저장했습니다." << std::endl;
-        } else {
-            std::cerr << "[Config Save Error] " << result.message << std::endl;
-        }
-        return result;
+        return Persistence::atomicWriteText(filepath, j.dump(4));
     } catch (const std::exception& e) {
-        std::cerr << "[Config Save Error] 설정 저장 중 예외 발생: " << e.what() << std::endl;
         return {PersistenceStatus::IoError, filepath, e.what()};
     }
 }

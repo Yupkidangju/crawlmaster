@@ -15,7 +15,7 @@ namespace crawl {
 namespace {
 
 std::string environmentValue(const char* name) {
-#ifdef _WIN32
+#ifdef _MSC_VER
     char* rawValue = nullptr;
     std::size_t valueSize = 0;
     if (_dupenv_s(&rawValue, &valueSize, name) != 0 || rawValue == nullptr) {

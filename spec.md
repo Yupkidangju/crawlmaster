@@ -1,597 +1,167 @@
-# spec.md (마스터 스펙 & 설계 마스터플랜)
+# spec.md (Crawlmaster v1.0.0 — AAA 마스터 스펙 & 설계 기준)
 
 ## 1. 문서 운영 규칙
-* 본 문서는 프로젝트 **Crawlmaster**의 절대적인 마스터플랜(Master Plan)이다.
-* 모든 코드 구현, 설정 파일, 그리고 `designs.md`, `implementation_summary.md` 등의 하위 문서는 본 문서의 사양을 엄격히 준수해야 한다.
-* 사양이 변경되거나 확장될 경우, 코드 수정을 진행하기 전에 반드시 본 문서를 먼저 갱신하여 정합성을 유지한다.
-* 모든 주석 및 문서는 **한국어**로 작성하는 것을 원칙으로 한다. (README.md만 다국어 지원)
+
+* 본 문서는 **Crawlmaster v1.0.0**의 단일 진실원(Source of Truth)이다.
+* 모든 소스 코드, 에셋 파이프라인, 테스트, `designs.md`, `DESIGN_DECISIONS.md`, `IMPLEMENTATION_SUMMARY.md`, `BUILD_GUIDE.md`는 본 스펙과 정합성을 유지한다.
+* 설계·계약 변경이 발생하면 코드를 수정하기 전에 본 문서를 먼저 갱신한다.
+* 내부 문서는 한국어로 작성하며, `README.md`는 5개국어(한국어·영어·일본어·중국어 번체·중국어 간체)를 유지한다.
 
 ## 2. 프로젝트 정체성
+
 * **프로젝트명:** Crawlmaster (크롤마스터)
-* **장르:** 1인칭 그리드 기반 3D 던전 탐험 RPG (Classic Wizardry 및 d20 D&D 5e 룰 기반)
-* **플랫폼/기술:** C++20, SFML (Simple and Fast Multimedia Library)를 이용한 그래픽/입력 처리 및 1인칭 와이어프레임 소프트웨어 3D 렌더링.
-* **현재 제품 lane:** 정식 출시 이전의 **3층 영속 던전 데모 후보**. Early Access 및 1.0 출시 완료를 주장하지 않는다.
-* **대상 사용자:** 키보드 중심의 고전 던전 탐험, 파티 구성, 턴제 d20 전투를 선호하는 싱글 플레이 사용자.
-* **검증 플랫폼:** Ubuntu 24.04 x86_64와 그 ABI/runtime 요구사항을 충족하는 Linux. X11/Xrandr/Xcursor/udev/FreeType/OpenGL 런타임이 필요하다. Windows Server 2022 hosted 증거는 0.9.4 source `4f988483bf5cbcfdce4c79a6aabab4a67a7043f9`에만 유효하며 현재 v0.10 tree의 Windows build/test/package/startup·attestation은 `UNVERIFIED`다. clean Windows 10/11, high-DPI와 장시간 실기도 `UNVERIFIED`, macOS는 현재 범위 밖이다.
-* **가격 정책:** 미정(TBD). 배포·권리·접근성 gate가 닫히기 전에는 유료 출시 가능 상태로 표시하지 않는다.
-* **주요 목표:** 마을 정비 -> 3층 영속 탐험 -> 목적형 퀘스트 -> 최종 전투 -> 결과 화면으로 이어지는 완결 가능한 수직 슬라이스와 D&D 5e 스타일 캐릭터 시뮬레이션.
+* **버전:** `1.0.0` (AAA 전면 리팩토링 릴리스)
+* **장르:** 다크 판타지 회화풍 리얼리즘 1인칭 3D 그리드 던전 크롤러 전술 RPG
+* **기술 기반:** C++20, SFML 2.6.1 (Window/Graphics/System), OpenGL 3.3+ / GLSL 3D 텍스처 던전 렌더링(+ 자동 GL 1.1 소프트웨어 텍스처 3D 폴백), `miniaudio` 0.11.26 헤더 온리 오디오 엔진, `nlohmann/json` 3.11.3
+* **아트 디렉션:** 다크 판타지 회화풍 리얼리즘 (*Legend of Grimrock* / *Wizardry 리메이크* / *Darkest Dungeon* 계열 — 습기 찬 고대 석조·노멀맵·흔들리는 동적 횃불 광원·바이옴별 안개·유화/회화풍 몬스터 및 초상화·금속/석재 9-슬라이스 UI)
+* **지원 플랫폼:** Ubuntu 24.04 x86_64 Linux 및 Windows x64 (MSVC 2022 + MinGW 정적 검사). GitHub Actions CI/CD로 양 플랫폼 빌드·테스트·패키지·SPDX SBOM·SLSA 증명·GitHub Release 자동 생성. macOS는 범위 밖.
 
-## 3. 목표와 성공 기준
-* **목표:**
-  * SFML 창(window) 내에서 20x20 크기의 랜덤 생성 미로를 1인칭 원근 와이어프레임 뷰로 렌더링하고 키보드 입력(W, A, S, D 또는 방향키)으로 끊김 없이 전후 이동 및 90도 회전이 가능해야 함.
-  * D&D 5e 스타일의 캐릭터 시트(6대 능력치, 보정치, HP, AC, 클래스별 특화 스킬 및 주문 슬롯)를 구현.
-  * 마을(Town)의 길드(Guild), 상점(Shop), 교회(Temple), 퀘스트 보드(Castle/Camp) 간의 화면 전이 및 상태 동기화 완료.
-  * 적 조우 시 턴제 전투(Combat) 모드로 진입하며, d20 주사위 굴림(명중 굴림 vs AC)을 활용한 전투 시스템이 작동해야 함.
-  * JSON 기반의 파티 데이터 저장/불러오기(Save & Load) 기능 지원.
-  * 추상 인터페이스를 통해 향후 아이템, 몬스터, 스킬, 장비 확장이 코어 시스템의 수정 없이 가능하도록 패키징.
-* **성공 기준 (완료 정의):**
-  * 게임을 실행하여 캐릭터 4명을 생성하고 파티를 짠 후 저장할 수 있다.
-  * 던전에 진입하여 무작위로 생성된 20x20 미로를 1인칭 3D 와이어프레임으로 탐험할 수 있다.
-  * 미니맵에 방문한 벽과 바닥이 정상 표시되며, 밟은 바닥은 네온 그린, 현재 파티 위치는 청록색 방향 삼각형으로 구분된다.
-  * 미니맵의 탐험된 빈 바닥을 마우스로 클릭하면 BFS 최단 경로를 따라 벽을 우회하며 0.1초 간격으로 한 칸씩 자동 이동한다.
-  * 던전 내에서 몬스터를 조우하여(자동 이동 도중 포함) 턴제 전투를 통해 무찌르거나 도망칠 수 있다.
-  * 수집한 아이템이나 몬스터 처치 수를 기반으로 퀘스트를 완료하고 마을 상점에서 장비를 매매한 뒤, 캐릭터 상태가 세이브 파일에 정상 반영된다.
-  * **[v0.8.0 추가]** 파티 인벤토리에 추가된 버프 물약, 해독 스크롤, 마나 물약 등을 사용해 상태이상을 치료하거나 주문 슬롯을 채우고, 전투 중에 습득한 다양한 스킬 및 주문을 선택하여 발동할 수 있다.
-  * 던전의 랜드마크와 최종 목표에 도달하여 보스 전투를 끝내고 결과 화면을 확인할 수 있다. 한 런의 설계 목표는 30~60분이며 실제 플레이테스트 전까지 이 수치는 `UNVERIFIED`다.
-  * 타이틀에서 New Game과 Continue가 분리되고, 파괴적 초기화는 확인 전에는 실행되지 않는다.
-  * 타이틀 화면 및 게임 플레이 도중 설정(Settings) 화면에 진입할 수 있으며(단축키: O키), 5개 국어(한국어, 영어, 일본어, 중국어 번체/간체) i18n 실시간 전환과 조작 가이드를 제공한다.
-  * Debug/Release 빌드, 등록된 CTest, Linux 재배치 패키지 smoke가 모두 통과해야 데모 후보로 판정한다. 현재 v0.10 Windows hosted gate와 실제 high-DPI/장시간 실기 gate 전에는 상용 지원 플랫폼 PASS로 승격하지 않는다.
+## 3. 목표와 객관적 AAA 성공 기준 (Objective AAA Quality Gates)
 
-## 4. 비목표 (Non-Goals)
-* 실시간 3D 그래픽스 및 텍스처 매핑 (와이어프레임 3D 및 단순 평면 드로잉만 적용).
-* 네트워크 멀티플레이어 (싱글 플레이 파티 RPG로 한정).
-* 복잡한 물리 엔진 및 실시간 충돌 판정 (그리드 좌표 충돌 및 단순 주사위 판정으로 한정).
-* 사운드 이펙트 및 BGM (SFML Audio 모듈 사용은 사양에서 배제, 향후 확장 스펙으로 격리).
-* D&D 5e of 모든 피트(Feats), 서브클래스, 5레벨 이상의 고레벨 마법 (최대 3레벨 캐릭터 레벨 및 1~2레벨 주문/스킬로 고정).
+| 게이트 영역 | 객관적 합격 기준 | 검증 수단 |
+| --- | --- | --- |
+| **G1. 3D 그래픽 & 아트** | 5개 고유 3D 바이옴(알베도+노멀맵+러프니스, 동적 횃불 광원, 안개, 블룸/비네트, 60fps 카메라 보간·헤드밥·파티클) + 전 몬스터/초상화/UI/마을 고해상도 회화풍 에셋. 와이어프레임 폴백 0건. | `UiStateRasterTests` 5개 바이옴/전투/마을 실제 PNG 캡처 시각 판독 + `ResourceVerification` |
+| **G2. 인터페이스 & UX** | 16:9 반응형 와이드스크린(기본 1280×720, 리사이즈·1920×1080·전체화면 지원), 완전한 마우스+키보드 하이브리드(호버·클릭·툴팁·비교), Controller-View MVC 완전 분리, 5개국어×배율×고대비 겹침/잘림 0건. | `UiStateRasterTests` + `FontRasterTests` + `HudContractTests` + `ControllerContractTests` |
+| **G3. 오디오** | BGM 5종 + 바이옴 환경음 5종 + 전투/탐험/UI SFX 22종 실음원(무음 아님, 클리핑 없음), 헤드리스 안전 `miniaudio` 믹서, Config v3 볼륨/음소거 영속화. | `AudioContractTests` + `ResourceVerification` |
+| **G4. 게임 시스템** | 5층 영속 월드(5개 바이옴, 함정·상자·비밀벽·레버·잠긴 문·성소·로어), 전열/후열 진형·무기 사거리·적 행동 예고·속성 약점·스태거/브레이크·8종 전직/특성 트리·장비 희귀도/접사/대장간 강화·8종 퀘스트 체인·2페이즈 최종 보스·몬스터 도감. | `CombatContractTests` + `ContentContractTests` + `AgencyContractTests` + `ControllerContractTests` E2E |
+| **G5. 저장·안정성·릴리스** | Save Schema v5 & Config Schema v3, 원자적 저장/백업/격리, 구 v1~v4 세이브 안전 격리, 결정론적 `SessionRng` 프로세스 리플레이, Debug/Release `-Wall -Wextra -Werror -pedantic` & MSVC `/W4 /WX` 무경고, CI Linux/Windows 릴리스 그린. | `TestHarness` + `RngProcessReplayTests` + CPack + CI/CD Matrix |
+
+## 4. 비목표 (Out of Scope)
+
+* 외부 게임 엔진(Godot, Unreal, Unity) 전환 및 3D 스켈레탈 메시 몬스터 모델 파이프라인
+* 게임패드(컨트롤러) 3중 입력 UI 및 동적 버튼 글리프 전환
+* 구버전 Save Schema v1~v4 자동 데이터 마이그레이션 (안전 격리 후 새 게임 안내만 수행)
+* 네트워크 멀티플레이어, macOS 타겟, 유료 외부 상용 에셋 구매
 
 ## 5. 동결된 핵심 결정
-* **화면 해상도:** 1024x768 고정 해상도 (SFML RenderWindow).
-* **그래픽스 스타일:** 레트로 벡터/와이어프레임 흑백 또는 녹색 계열 (그린 스크린 룩앤필)의 네온 와이어프레임 스타일.
-* **렌더링 방식:** 현재 플레이어의 위치와 바라보는 방향 벡터를 기준으로 전방 최대 4칸(시야 거리)의 그리드 벽 데이터를 투영 계산하여 SFML `sf::VertexArray` (Lines/LineStrip)로 직접 투영 및 선 그리기.
-* **파티 인원:** 최대 4인 파티 구성.
-* **세이브 포맷:** UTF-8 JSON 파일 (`save.json`).
-* **세이브 시점:** 마을, 탐험 autosave, 층/목표 전이, 전투 정산과 종결 결과에서 전체 세션 checkpoint를 기록한다. 활성 던전 좌표와 전투 중간 재개는 지원하지 않는다.
-* **TPK:** 현재 전투를 종료하고 가장 최근 성공한 전체 세션 checkpoint의 Party·Quest·World·RNG를 함께 복구한다. TPK가 정상 저장 파일을 삭제하거나 덮어쓰지 않는다.
-* **난이도/판정:** 프로세스 세션이 소유하는 하나의 `std::mt19937` stream을 사용한다. 시작 seed는 로그와 저장 메타데이터에 남기며 테스트에서 주입할 수 있어야 한다.
-* **오디오:** 현재 비목표다. 실제 오디오 구현 전까지 BGM/SFX 볼륨을 작동하는 설정처럼 노출하지 않는다.
 
-## 6. 기술 스택과 아키텍처 원칙
-* **언어 표준:** C++20 (`std::format`, `std::ranges`, `std::jthread` 등 현대적 C++ 기능 적극 활용)
-* **외부 라이브러리:** SFML 2.6.x (Window, Graphics, System), nlohmann/json (JSON 파싱 및 직렬화용 헤더온리 라이브러리)
-* **컴파일러 & 빌드 툴:** CMake 3.28 이상, GCC 11 이상 또는 MSVC 2022 이상.
-* **아키텍처 패턴:** MVC (Model-View-Controller) 패턴을 차용한 상태 엔진 구조.
-  * **Model:** 게임 데이터 (Character, Party, Inventory, Map, Monster, Quest, Skill)
-  * **View:** SFML 기반 `DungeonRenderer`. Town/Combat/CharacterInfo/Settings 화면은 현재 각 State가 직접 렌더링하며, 존재하지 않는 renderer를 책임 파일로 문서화하지 않는다.
-  * **Controller:** GameStateManager 및 각 State별 입력 핸들러 (TitleState, TownState, DungeonState, CombatState, CharacterInfoState, QuestJournalState, ShutdownState)
-* **메모리 관리:** raw pointer 사용을 최소화하고 `std::unique_ptr` 및 `std::shared_ptr`으로 소유권을 표현하며, 테스트와 도구로 수명 오류를 점검한다.
+1. **화면:** 기본 `1280x720` (16:9), 리사이즈 가능(`sf::Style::Default`), `F11` 및 설정 화면에서 전체화면 전환 및 해상도 프리셋(`1280x720`, `1600x900`, `1920x1080`) 지원. 가상 1280×720 논리 좌표계와 고해상도 3D 백버퍼 매핑으로 모든 비율에서 왜곡 없는 반응형 렌더링 제공.
+2. **렌더링 이중 경로:**
+   * **Primary (Hardware OpenGL / GLSL):** SFML OpenGL 컨텍스트 위에서 GLSL 120/130/330 셰이더로 노멀맵 조명, 다중 흔들리는 동적 횃불 점광원, 바이옴 지수 안개, 수면/용암 발광, 포스트프로세싱 블룸/비네트/색보정, 파티클을 렌더링한다.
+   * **Fallback (Software-Textured 3D for GL 1.1 / Headless CI):** `sf::Shader::isAvailable() == false` 환경(예: Windows CI GDI Generic OpenGL 1.1)에서도 동일한 텍스처 3D 원근 폴리곤·거리 안개·동적 횃불 정점 조명·몬스터/UI 스프라이트로 렌더링하며 크래시나 와이어프레임 퇴행이 절대 발생하지 않는다.
+3. **오디오:** `miniaudio` 0.11.26 (`877ea4a7c2601c7b0f2a44e83dfac42e6470fea6`)을 단일 헤더 CMake FetchContent로 고정. 오디오 장치 부재 또는 `CRAWLMASTER_HEADLESS=1` 시 자동으로 Null 백엔드로 폴백한다.
+4. **세이브/설정 정책:** **Save Schema v5** & **Config Schema v3** 클린 브레이크. 구버전 세이브(`schemaVersion < 5`) 감지 시 원본을 보존한 채 `quarantine` 이동 후 `PersistenceStatus::UnsupportedVersion` 반환. v5 자체의 same-dir temp -> fsync -> backup rotate -> atomic replace, `recoveryPending` write fence, TPK non-destructive checkpoint 복원, `SessionRng` seed + raw draw count 리플레이 계약은 100% 유지.
+5. **파티:** 최대 4인, 최대 레벨 **10**, 레벨 3에서 직업당 2종 전직(총 8종) 해금, 레벨업마다 특성 포인트(Talent Point) 1 획득.
+6. **입력:** 모든 화면에서 마우스(호버·좌클릭·우클릭 취소·스크롤·툴팁)와 키보드(WASD/QE/방향키·Enter/Space·Esc·단축키) 100% 하이브리드 동작.
 
-## 7. 런타임/빌드 파이프라인
-* **의존성 설치:** CMake FetchContent의 immutable commit pin으로 SFML 2.6.1과 nlohmann/json 3.11.3을 가져오며 시스템 패키지 우선 탐색으로 빌드 결과가 달라지지 않게 한다.
-* **빌드 출력 경로:** 프로젝트 루트 하위의 `build/` 디렉터리에 아웃풋 바이너리 생성.
-* **자산(Asset) 경로:** 개발 빌드는 빌드 트리의 `assets/`, 설치 빌드는 실행 파일 기준 `../share/crawlmaster/assets/`를 사용한다. process CWD에 의존하지 않는다.
-* **사용자 데이터 경로:** Linux는 `$XDG_DATA_HOME/crawlmaster` 또는 `$HOME/.local/share/crawlmaster`, Windows는 `%APPDATA%/Crawlmaster`를 사용한다. 테스트만 명시 경로를 주입한다.
+## 6. 기술 스택과 아키텍처 (MVC 완전 분리)
 
-## 8. 디렉터리 구조
-```text
-crawlmaster/
-├── CMakeLists.txt              # CMake 빌드 정의
-├── README.md                   # 다국어 리드미
-├── spec.md                     # 마스터 설계 스펙 (본 파일)
-├── designs.md                  # UI 디자인 명세
-├── CHANGELOG.md                # 변경 이력
-├── BUILD_GUIDE.md              # 빌드 및 실행 가이드
-├── IMPLEMENTATION_SUMMARY.md   # 구현 요약 및 파일 책임
-├── DESIGN_DECISIONS.md         # 결정 이력 및 대안
-├── audit_roadmap.md            # 로드맵 및 테스트 프로세스
-├── assets/                     # 폰트, 스프라이트 등 정적 리소스
-│   └── fonts/
-│       ├── UbuntuMono[wght].ttf # UFL-1.0 영문 폴백
-│       ├── neodgm.ttf           # 복고풍 한/영 공용 폰트
-│       └── NotoSansCJK-Regular.ttc # OFL-1.1 혼합 CJK/ASCII 폰트
-├── include/                    # 헤더 파일 (.hpp)
-│   ├── core/                   # 게임 핵심 루프 및 상태 관리
-│   ├── model/                  # D&D 규칙, 캐릭터, 몬스터, 아이템, 퀘스트, 스킬
-│   ├── view/                   # SFML 소프트웨어 3D 및 UI 렌더링
-│   └── controller/             # 각 상태별 입력 및 이벤트 로직
-└── src/                        # 소스 코드 파일 (.cpp)
-    ├── main.cpp
-    ├── core/
-    ├── model/
-    ├── view/
-    └── controller/
-```
+* **Core (`include/core/`, `src/core/`):**
+  * `Game`: SFML 윈도우, 16:9 뷰포트 매핑, 60fps 델타타임, 화면 페이드 전환, 토스트 알림, 상태 루프
+  * `GameStateManager`: 스택 기반 상태 전이(`push/pop/change/replaceAll`)
+  * `AssetManager`: 텍스처·노멀맵·초상화·몬스터 스프라이트·아이콘·셰이더·폰트 캐시 및 검증
+  * `AudioManager`: `miniaudio` 래퍼(BGM 크로스페이드, 바이옴 환경음, 폴리포닉 SFX, 헤드리스 Null 안전)
+  * `LocalizationManager`: 5개국어 카탈로그, 플레이스홀더 포맷터, Config v3(언어·배율·고대비·해상도·전체화면·볼륨·음소거·그래픽 품질)
+  * `Persistence`, `ResourceLocator`, `SessionRng`
+* **Model (`include/model/`, `src/model/`):**
+  * `Character`: 신원, 6대 능력치, 레벨 1~10, `CombatRow`, `Specialization`, 특성 트리(`TalentId`), 4슬롯 장비(Weapon/Armor/Shield/Accessory), 상태이상 9종, 버프/가드/도발
+  * `Equipment` / `Item` / `ConcreteItems` / `ItemFactory`: 36+ 기본 아이템, `ItemRarity`(5등급), `upgradeLevel`(+0~+5), `ItemAffix`, `WeaponReach`(Melee/Reach/Ranged), `DamageType`(9속성)
+  * `Skill` / `ConcreteSkills` / `SkillFactory`: 4직업 × 6스킬(기본 4 + 전직 특화 2 = 24+ 스킬/주문)
+  * `Monster` / `MonsterFactory`: 20종 몬스터(5층 일반/정예 14종 + 층별 중보스 5종 + 2페이즈 최종 보스 1종), `stagger/poise`, 약점/저항, `EnemyIntent` 텔레그래프 AI
+  * `CombatRules` / `CombatActionRules`: 진형 보정, 무기 사거리, 속성 배율(약점 1.5x / 저항 0.5x), 스태거/브레이크(+50% 피해·행동 취소), d20 명중·자연 1/20 치명타, 대장간 강화/재연마 공식
+  * `DungeonMap` / `DungeonWorld`: `FLOOR_COUNT = 5`, 5개 바이옴, 20×20 방+복도+루프 시드 생성, 함정·상자·비밀벽·레버/잠긴 문·성소·로어·보스 게이트·도달성 검증
+  * `Quest`: 8종 정식 퀘스트 체인(회수·NPC 탐색·층별 보스 토벌·성소 유물·최종 용 토벌)
+  * `Bestiary`: 몬스터 조우·처치 횟수 및 약점/드롭 해금 기록
+  * `Party`: 4인 파티, 인벤토리, 중요품, 골드, 퀘스트, 도감, 5층 영속 월드, Save v5 직렬화
+* **View (`include/view/`, `src/view/`):**
+  * `UiTheme`: 다크 판타지 컬러/타이포/희귀도/속성 토큰
+  * `UiSystem`: 9-슬라이스 패널, 인터랙티브 버튼(마우스 히트박스+호버+SFX), 애니메이션 게이지 바, 자동 경계 클램핑 툴팁, 플로팅 텍스트, 파티클 VFX 시스템, 모달 다이얼로그
+  * `DungeonRenderer`: 1인칭 3D 텍스처/셰이더 던전 렌더러(GLSL 3D + 자동 GL 1.1 텍스처 3D 폴백, 카메라 보간/헤드밥/흔들림, 3D 바이옴 파티클, 미니맵/전체지도, 하단 파티 초상화 바, 로그)
+  * `GameViews`: `TitleView`, `TownView`(길드/상점/대장간/교회/게시판/도감), `CharacterCreationView`, `CombatView`(3D 배경+몬스터 스프라이트 애니메이션+인텐트+스태거+턴 타임라인+VFX), `CharacterInfoView`(장비 비교+특성 트리+진형 전환), `QuestJournalView`, `BestiaryView`, `SettingsView`, `EndgameView`
+  * `PartyHudSnapshot`: 불변 HUD 스냅샷 계약
+* **Controller (`include/controller/`, `src/controller/`):**
+  * `TitleState`, `TownState`, `CharacterCreationState`, `DungeonState`, `CombatState`(+`CombatStateActions`), `CharacterInfoState`, `QuestJournalState`, `BestiaryState`, `SettingsState`, `GameOverState`, `VictoryState`, `ShutdownState`
+  * 컨트롤러는 상태/입력(마우스+키보드)/규칙 오케스트레이션만 담당하고, 모든 렌더링은 `View` 계층에 위임한다.
 
-## 9. 핵심 동작 정의 (State Machine)
-게임은 다음의 유한 상태 기계(FSM)로 관리된다.
+## 7. 시스템 상세 명세 및 실데이터 기준표
 
-```mermaid
-stateDiagram-v2
-    [*] --> TitleState : 실행
-    TitleState --> TownState : 신규 게임 생성 / 세이브 로드
-    TitleState --> SettingsState : 설정 진입 (Title)
-    TitleState --> [*] : 종료
-    
-    TownState --> DungeonState : 던전 진입
-    TownState --> SHOP : 상점 진입 (구매/판매 선택)
-    SHOP --> SHOP_BUY : 아이템 구매 카탈로그 진입
-    SHOP --> SHOP_SELL : 인벤토리 아이템 판매 진입
-    SHOP_BUY --> SHOP : 취소/뒤로가기
-    SHOP_SELL --> SHOP : 취소/뒤로가기
-    SHOP --> TownState : 상점 퇴장 (마을 허브)
-    TownState --> GuildSubState : 캐릭터 생성/편성
-    TownState --> TempleSubState : 치료/부활
-    TownState --> CastleSubState : 퀘스트 수주/보고
-    TownState --> SettingsState : 설정 진입 (Town)
-    
-    DungeonState --> CombatState : 랜덤 몬스터 조우
-    DungeonState --> SettingsState : 설정 진입 (Dungeon)
-    CombatState --> DungeonState : 승리 / 도망 성공
-    CombatState --> GameOverState : 파티 전원 사망
-    
-    DungeonState --> TownState : 탈출/마을 귀환
-    GameOverState --> TitleState : 타이틀로 복귀
-    SettingsState --> [*] : 이전 상태로 복귀 (popState)
-```
+### 7.1 5개 층 바이옴 & 캠페인 구조 (`DungeonWorld::FLOOR_COUNT = 5`)
 
-## 10. 시스템 명세
+| 층 | Biome ID | 테마 | 조명/안개 톤 | 일반/정예 몬스터 풀 | 층 보스 / 핵심 목표 |
+| --- | --- | --- | --- | --- | --- |
+| 1F | `CATACOMBS` | 수몰된 납골당 | 따뜻한 호박 횃불 + 짙은 이끼 녹회색 안개 | `mon_kobold`, `mon_goblin`, `mon_skeleton`, `mon_crypt_rat` | `mon_crypt_warden` (묘지 감시자) + `qst_01_relic`, `qst_02_warden` |
+| 2F | `CISTERN` | 익사자의 수로 | 청록 포자광 + 축축한 감청색 안개 | `mon_giant_spider`, `mon_goblin_shaman`, `mon_drowned_knight`, `mon_mire_slime` | `mon_bog_hydra` (수렁 히드라) + `qst_03_scout`, `qst_04_hydra` |
+| 3F | `OSSUARY` | 저주받은 납골회랑 | 자줏빛 영혼 화로 + 창백한 골회색 안개 | `mon_ghoul`, `mon_orc`, `mon_bone_archer`, `mon_wraith` | `mon_ossuary_lich` (납골 리치) + `qst_05_phylactery`, `qst_06_lich` |
+| 4F | `FOUNDRY` | 흑요석 대장간 | 주황 용암광 + 그을음 암적색 안개 | `mon_orc_berserker`, `mon_ember_golem`, `mon_ash_cultist`, `mon_hellhound` | `mon_iron_colossus` (강철 거신) + `qst_07_forge_core` |
+| 5F | `SANCTUM` | 용의 성소 | 심홍 용염 + 황금빛 흑요석 안개 | `mon_drake_guard`, `mon_dragon_whelp`, `mon_sanctum_wyrm` | **2페이즈 최종 보스** `mon_elder_wyrm` (태고의 비룡) + `qst_08_elder_wyrm` |
 
-### 10.1 캐릭터 모델 및 D&D 룰 명세
-* **캐릭터 생성 흐름:**
-  * 길드에서 이름, 나이, 성별, 직업을 선택한 뒤 능력치를 굴리고 10포인트를 모두 배분한 후 최종 확인한다.
-  * 이름은 앞뒤 공백을 제거한 Unicode 1~16자이며 제어문자를 허용하지 않는다. 나이는 18~80, 신규 캐릭터 성별은 남성/여성/논바이너리 중 하나다.
-  * 나이와 성별은 캐릭터 표현 정보이며 능력치나 전투 판정에는 영향을 주지 않는다.
-  * 능력치 6종은 각각 `4d6` 중 최저값을 제외한 합으로 생성한다. `R` 리롤은 횟수 제한이 없고 배분을 초기화하며 세션 RNG를 사용한다.
-  * 증가 후 점수가 12 이하면 1점, 13~15면 2점, 16~18이면 3점을 소비한다. 18을 초과할 수 없고 감소 시 실제 소비 비용을 환급하되 최초 롤 아래로 내릴 수 없다.
-  * 10포인트를 모두 써야 최종 확인할 수 있다. 확인 전 취소는 파티와 저장 파일을 변경하지 않는다.
-* **능력치 (Abilities):**
-  * `STR` (근력), `DEX` (민첩), `CON` (건강), `INT` (지능), `WIS` (지혜), `CHA` (매력)
-  * 능력치에 따른 보정치 공식: `Modifier = floor((Score - 10) / 2)`
-* **클래스 (Class) 상세 정의:**
-  * **전사 (Warrior):** Hit Die `d10`. 주 능력치 `STR`. 초기 장비: 롱소드, 스케일 메일. 특화 스킬: 레벨업에 따라 Slash (`skl_slash`), Shield Bash (`skl_shield_bash`), Cleave (`skl_cleave`) 습득.
-  * **마법사 (Mage):** Hit Die `d6`. 주 능력치 `INT`. 초기 장비: 마법 지팡이, 로브. 특화 스킬: 레벨업에 따라 Magic Missile (`spl_magic_missile`), Sleep (`spl_sleep`), Fireball (`spl_fireball`) 주문 습득. 1레벨 주문 슬롯 2개로 시작하여 레벨당 증가.
-  * **도적 (Rogue):** Hit Die `d8`. 주 능력치 `DEX`. 초기 장비: 단검, 가죽 갑옷. 특화 스킬: 레벨업에 따라 Sneak Attack (`skl_sneak_attack`), Poison Dart (`skl_poison_dart`), Shadowstrike (`skl_shadowstrike`) 습득.
-  * **성직자 (Cleric):** Hit Die `d8`. 주 능력치 `WIS`. 초기 장비: 메이스, 체인 메일, 방패. 특화 스킬: 레벨업에 따라 Cure Wounds (`spl_cure_wounds`), Bless (`spl_bless`), Prayer of Healing (`spl_prayer_of_healing`) 주문 습득. 1레벨 주문 슬롯 2개로 시작하여 레벨당 증가.
-* **레벨 1 직업 고유 특성:**
-  * **전사 - 방어 전투술:** 방어구 장착 중 AC `+1`.
-  * **도적 - 빠른 반사신경:** 우선권 판정 `+2`.
-  * **마법사 - 비전 강화:** 피해 주문이 영향을 주는 각 적에게 최종 피해 `+2`.
-  * **성직자 - 신성한 은총:** 치유 주문이 영향을 주는 각 아군의 회복량 `+2`.
-* **전투 스탯:**
-  * `AC` (Armor Class, 방어도): `10 + DEX 보정치 + 장착 갑옷 AC 보너스 + 장착 방패 AC 보너스`
-    * 단, 체인 메일(`arm_chain`) 착용 시 DEX 보정치 없이 고정 AC 16.
-    * 플레이트 아머(`arm_plate`) 착용 시 DEX 보정치 없이 고정 AC 18.
-    * 스케일 메일(`arm_scale`) 착용 시 DEX 보정치는 최대 +2까지만 가산.
-  * `HP` (Hit Points, 체력): 레벨업 시 `Hit Die + CON 보정치` 만큼 누적 증가. (최소 1 보장)
-  * `Proficiency Bonus` (숙련 보너스): 1~3레벨 모두 `+2`로 유지.
-* **캐릭터 상태이상 및 버프 상태 관리 (v0.8.0 추가):**
-  * **상태이상:**
-    * **독 (Poison):** 매 전투 턴 시작 시 캐릭터는 `1d3`의 독 지속 피해를 입음. 지속 시간(턴수)이 다하면 해제됨.
-    * **마비 (Paralysis):** 턴 시작 시 행동 불가가 되어 자신의 차례를 스킵함. 매 턴 시작 시 1턴씩 차감.
-  * **버프:**
-    * **STR 버프 / DEX 버프:** 버프 물약 복용 시 적용. 해당 능력치 실시간 수치에 `+3` 보정치를 더함. (전투 중에만 지속, 전투 종료 시 자동 만료)
-    * **Bless (축복):** 성직자 주문 효과. 모든 공격 명중 굴림(Attack Roll)에 `+2` 보너스 획득.
+### 7.2 던전 탐험 기믹 (`DungeonMap` / `WorldObject`)
 
-### 10.2 던전 생성 및 1인칭 렌더링 명세
-* **던전 맵 데이터:**
-  * 크기: 20x20 2차원 배열.
-  * 셀 구성요소: `Wall` (벽), `Empty` (이동 가능 바닥), `Door` (문), `UpStairs` (마을로 복귀하는 입구 계단).
-  * 생성 알고리즘: DFS 기반 미로 생성 및 임의 벽 해제를 통한 루프(Loop)화.
-* **1인칭 와이어프레임 투영 알고리즘:**
-  * 플레이어 격자 좌표 및 방향에 따른 전방 N(1~4) 칸 벽면 원근 와이어프레임 렌더링.
-  * 수직선 높이: $H(d) = ScreenHeight / (d + 1)$, 폭: $W(d) = ScreenWidth / (d + 1)$.
+* **TileType:** `WALL`, `EMPTY`, `DOOR`, `LOCKED_GATE`, `SECRET_WALL`, `UPSTAIRS`, `DOWNSTAIRS`, `BOSS_GATE`
+* **WorldObjectKind:** `QUEST_ITEM`, `NPC`, `QUEST_BOSS`, `CHEST`, `TRAP`, `LEVER`, `SANCTUARY`, `LORE_PLAQUE`
+* **규칙:**
+  * `CHEST`: 층별 스케일링된 골드 + Uncommon/Rare/Epic 접사 장비 또는 소모품 획득 (1회성).
+  * `TRAP`: 파티에 도적(`ROGUE`)이 있으면 인접 시 자동 탐지(노란 경고 아이콘 + 3D 바닥 룬 표시). `E`로 해제 시도(`d20 + DEX mod + (Rogue ? +4 : 0) >= 12 + floor`). 실패 또는 밟을 시 함정 피해/독 발동 후 해제.
+  * `LEVER`: `E` 작동 시 같은 층의 `LOCKED_GATE` 숏컷을 영구 개방(계단과 보스실 사이 귀환 동선 단축).
+  * `SECRET_WALL`: 인접 시 미세한 금/광채 표시, `E` 조사 시 통로로 개방되어 비밀 보물방 연결.
+  * `SANCTUARY`: 층당 1회 화톳불 성소 휴식 — 생존 파티원 HP 60% 회복 + 주문 슬롯 50%(최소 1) 회복 + 독/화상 해제.
+  * `LORE_PLAQUE`: 층별 다크 판타지 세계관 비문 열람 + 소량 경험치(25 × floor) 최초 1회 획득.
 
-### 10.3 전투 시스템 (Combat System) 명세
-* **턴 순서 (Initiative):**
-  * 전투 시작 시 `1d20 + DEX 보정치`를 굴려 높은 순으로 행동.
-* **명중 판정 (Attack Roll):**
-  * `1d20 + 관련 보정치(STR/DEX) + 숙련 보너스(Proficiency) + 버프(Bless 등)`가 대상의 `AC` 이상이면 명중.
-  * 주사위 자연수 20은 치명타(두 번의 피해 주사위 굴림), 자연수 1은 무조건 빗나감.
-* **피해 판정 (Damage Roll):**
-  * 공격 명중 시 무기 피해 주사위 + 능력치 보정치만큼 대상 HP 차감. 0 이하 시 사망.
-  * 무기 피해 타입은 `SLASHING`, `PIERCING`, `BLUDGEONING` 중 하나다.
-  * `mon_skeleton`은 참격/관통 최종 피해를 `floor(damage * 0.5)`로 감쇄하고 타격 피해는 그대로 받는다.
-  * 명중 굴림을 사용하는 Slash, Shield Bash, Cleave, Sneak Attack, Poison Dart, Shadowstrike는 일반 공격과 같은 `CombatRules` 명중·자연 1/20·Bless·피해 타입·저항 경로를 사용한다.
-  * 무기 기반 Skill은 장착 무기의 dice count/sides/type을 보존한다. Skill 고유 attack bonus, flat damage bonus와 extra dice만 공통 계산에 추가한다.
+### 7.3 전술 전투 시스템 (`CombatRules`)
 
-### 10.4 퀘스트 시스템 명세
-* **퀘스트 구조:**
-  * ID, 이름, 타입(`DEFEAT_BOSS`, `RETRIEVE_KEY_ITEM`, `FIND_NPC`), 대상 ID/층, `ACTIVE|READY_TO_REPORT` 상태, 골드/경험치/아이템 보상.
-  * 신규 보드는 `qst_recover_moon_seal`, `qst_defeat_crypt_warden`, `qst_find_missing_scout`만 제공한다. v1~v3에서 로드한 기존 수량형 활성 퀘스트는 완료/보고만 허용한다.
-  * 세 퀘스트는 동시에 수주할 수 있다. 현장 목표 해결은 보상을 지급하지 않으며 성에서 보고하고 저장이 커밋될 때 정확히 한 번 지급한다.
-  * 중요품은 일반 인벤토리와 분리되어 판매·사용·장착·폐기할 수 없고 보고 시 소비된다.
+* **전열/후열 진형 (`CombatRow::FRONT`, `CombatRow::BACK`):**
+  * 전열: 근접 무기(`MELEE`) 100% 피해, 적 근접 공격 우선 타겟(가중치 75%).
+  * 후열: 근접 무기 공격 시 피해 -35%(최소 1), 원거리/장병기(`REACH`/`RANGED`) 및 마법 100% 피해, 근접 피격 시 AC +2 보너스.
+  * 전투 중 행동으로 `Guard`(방어 태세: 다음 턴까지 받는 피해 50% 감소 + AC +3 + 스태거 반격) 및 `Swap Row`(진형 교대, 턴 소비 없이 턴당 1회 가능 또는 전술 버튼) 제공.
+* **9대 속성 (`DamageType`):** `SLASHING`, `PIERCING`, `BLUDGEONING`, `FIRE`, `ICE`, `LIGHTNING`, `HOLY`, `POISON`, `ARCANE`.
+  * 약점 적중: 피해 **1.5배** + 스태거 게이지 추가 -2 (기본 -1).
+  * 저항 적중: 피해 **0.5배**(최소 1), 스태거 감소 0.
+* **스태거/브레이크 (Stagger & Break):**
+  * 모든 몬스터는 `maxStagger` (일반 2~3, 정예 4, 중보스 5, 최종 보스 6) 보유.
+  * `currentStagger == 0` 도달 시 **BROKEN** 상태(1턴 행동 취소 + 받는 피해 **1.5배** + 예약된 차징/광역기 강제 중단). 브레이크 종료 후 `currentStagger = maxStagger` 회복.
+* **적 행동 예고 (`EnemyIntent`):**
+  * 매 라운드/턴 시작 시 모든 생존 몬스터가 다음 행동(`ATTACK`, `HEAVY_STRIKE`, `AOE_BREATH`, `SPELL`, `DEBUFF`, `BUFF`, `DEFEND`, `CHARGING`)을 확정하고 UI 아이콘·툴팁으로 공개.
+  * 최종 보스 `mon_elder_wyrm`은 HP ≤ 50% 도달 시 **Phase 2: 태고의 각성** 돌입(스태거 초기화, 화염 보호막, 격노 광역 브레스 패턴 해금).
 
-### 10.4.1 3층 영속 월드
-* 새 게임은 session seed를 `worldSeed`로 사용해 3개의 20x20 맵을 한 번 생성하고 save schema v4에 전체 snapshot을 기록한다.
-* 층별 seed는 `splitmix32(worldSeed + 0x9E3779B9 * floorNumber)`이며 월드 생성은 전역 전투 RNG draw count를 소비하지 않는다.
-* 1층은 시작/하행 계단과 회수품, 2층은 상·하행 계단과 퀘스트 보스, 3층은 상행 계단·NPC·최종 BossGate를 가진다. 모든 예약 타일은 중복 없이 도달 가능해야 한다.
-* 지형, `visited`, `stepped`, 오브젝트의 `PRESENT|DISCOVERED|RESOLVED` 상태는 New Game 전까지 유지한다. Continue와 마을 재입장은 1층 입구에서 시작하며 던전 좌표 중간 재개는 지원하지 않는다.
-* `E`는 계단, 중요품, NPC 상호작용 키다. 활성 퀘스트 보스 칸 진입은 도주 불가 고정 전투를 시작한다. 최종 Dragon Whelp만 캠페인 Victory를 발생시킨다.
+### 7.4 캐릭터 성장·전직·특성 트리 (레벨 1~10)
 
-## 11. 경계 타입과 계약 (Typed Contracts)
+* **레벨업 공식:** `nextLevelXp(L) = 100 * L * L` (Lv 1→2: 100, Lv 2→3: 400, ..., Lv 9→10: 8100). 최대 레벨 10.
+* **전직 (레벨 3 이상, 마을 길드 또는 캐릭터 정보창에서 1회 선택):**
+  * `WARRIOR` → `VANGUARD` (방벽의 기사: AC+2, 도발/아군 엄호) | `BERSERKER` (광전사: 공격력+2, 피의 격노/출혈)
+  * `MAGE` → `PYROMANCER` (화염술사: 화염 피해+25%, 메테오 스파크) | `CHRONOMANCER` (시공간술사: 빙결/전격·가속·적 지연)
+  * `ROGUE` → `ASSASSIN` (암살자: 치명타 범위 19~20, 급소 처형) | `TRAPSMITH` (기공사: 함정 해제+6, 연막탄·산성폭탄)
+  * `CLERIC` → `PALADIN` (성기사: 전열 신성 강타·오라) | `ORACLE` (신탁사: 주문 슬롯+2, 광역 정화·부활의 기도)
+* **특성 포인트 (Talent Tree):** 레벨업마다 1포인트 획득, 직업별 4개 패시브 노드(각 최대 3랭크: 체력/공격/전술/속성 특화)에 투자.
 
-```cpp
-// 1. 캐릭터 클래스 선언 타입
-enum class CharacterClass {
-    WARRIOR,
-    MAGE,
-    ROGUE,
-    CLERIC
-};
+### 7.5 장비 희귀도, 접사, 대장간 강화 & 36+ 아이템
 
-enum class Gender {
-    MALE,
-    FEMALE,
-    NON_BINARY,
-    UNSPECIFIED // v1/v2 저장 이관 전용
-};
+* **희귀도 (`ItemRarity`):** `COMMON`(#d6cfc2), `UNCOMMON`(#52c46b), `RARE`(#4a9eff), `EPIC`(#b86bff), `LEGENDARY`(#ffb833).
+* **장비 슬롯 (4종):** `WEAPON`, `ARMOR`, `SHIELD`, `ACCESSORY` (반지·부적).
+* **대장간 (`TownLocation::BLACKSMITH`):**
+  * **강화 (Enhance +0 → +5):** 비용 `40 * (upgradeLevel + 1) * rarityMultiplier` 골드. 무기 피해 보너스 +1/레벨, 방어구/방패 AC +1/2레벨(홀수 레벨 HP+4), 장신구 주능력치 +1/2레벨.
+  * **재연마 (Reforge Affix):** 비용 `60 * rarityMultiplier` 골드. `SessionRng`로 장비 접사(STR/DEX/CON/INT/WIS/AC/CRIT/LIFESTEAL/ELEMENTAL) 재부여.
 
-struct CharacterIdentity {
-    std::string name;
-    int age;
-    Gender gender;
-    CharacterClass characterClass;
-};
+### 7.6 8종 정식 퀘스트 체인
 
-enum class Ability {
-    STRENGTH, DEXTERITY, CONSTITUTION, INTELLIGENCE, WISDOM, CHARISMA
-};
+1. `qst_01_relic` (1F 회수): 납골당의 잃어버린 성배 회수 (`key_sun_chalice`)
+2. `qst_02_warden` (1F 보스): 묘지 감시자 토벌 (`mon_crypt_warden`)
+3. `qst_03_scout` (2F NPC): 실종된 길드 정찰병 엘라 구조 (`npc_missing_scout`)
+4. `qst_04_hydra` (2F 보스): 익사자의 수로 지배자 수렁 히드라 토벌 (`mon_bog_hydra`)
+5. `qst_05_phylactery` (3F 회수): 저주받은 성물함 회수 (`key_bone_phylactery`)
+6. `qst_06_lich` (3F 보스): 납골 리치 토벌 (`mon_ossuary_lich`)
+7. `qst_07_forge_core` (4F 보스/회수): 강철 거신 토벌 및 흑요석 핵 확보 (`mon_iron_colossus`)
+8. `qst_08_elder_wyrm` (5F 최종 보스): 태고의 비룡 토벌 (`mon_elder_wyrm`) → 캠페인 승리(`VictoryState`)
 
-// 2. 능력치 구조체
-struct AbilityScore {
-    int strength = 10;
-    int dexterity = 10;
-    int constitution = 10;
-    int intelligence = 10;
-    int wisdom = 10;
-    int charisma = 10;
-    
-    int getModifier(int score) const {
-        int diff = score - 10;
-        return (diff < 0) ? (diff - 1) / 2 : diff / 2;
-    }
-};
+## 8. 저장 및 설정 스키마 (Save v5 / Config v3)
 
-// 3. 아이템 추상 인터페이스
-class Item {
-public:
-    virtual ~Item() = default;
-    virtual std::string getId() const = 0;
-    virtual std::string getName() const = 0;
-    virtual int getGoldValue() const = 0;
-    virtual std::string getDescription() const = 0;
-    virtual bool isEquipment() const = 0;
-};
+* **Save Schema v5 (`save.json`):**
+  * `schemaVersion: 5` (v1~v4 파일 발견 시 자동 `quarantine` 후 `PersistenceStatus::UnsupportedVersion`)
+  * `lastSessionSeed`, `sessionRngDrawCount`, `gold`, `campaignCompleted`, `totalTurns`, `deepestFloorReached`
+  * `members[]`: 신원, 클래스, 전직, 레벨, XP, HP/MaxHP, SpellSlots, `row`, 6대 능력치, 특성 랭크, 장착 장비(ID + rarity + upgradeLevel + affix), 상태이상
+  * `inventory[]`: 일반 아이템/접사·강화 장비
+  * `keyItems[]`, `quests[]`, `bestiary[]`
+  * `dungeonWorld`: `seed`, `floors[5]`(20×20 타일·방문·밟음·탐지 함정), `objects[]`(상태 포함)
+* **Config Schema v3 (`config.json`):**
+  * `schemaVersion: 3`
+  * `language`, `textScale`, `highContrast`, `windowWidth`, `windowHeight`, `fullscreen`, `masterVolume`, `bgmVolume`, `sfxVolume`, `muted`, `graphicsQuality`
 
-// 4. 장비 아이템 파생 인터페이스
-enum class EquipSlot {
-    WEAPON,
-    ARMOR,
-    SHIELD,
-    ACCESSORY
-};
+## 9. 빌드, 검증 및 CI/CD 릴리스 파이프라인
 
-class Equipment : public Item {
-public:
-    virtual EquipSlot getSlot() const = 0;
-    virtual int getAcBonus() const = 0;
-    virtual int getDamageDiceCount() const = 0;
-    virtual int getDamageDiceSides() const = 0;
-    virtual int getStatBonus(const std::string& statName) const = 0;
-};
-
-// 5. 몬스터 추상 클래스
-class Monster {
-protected:
-    std::string id;
-    std::string name;
-    int hp;
-    int maxHp;
-    int ac;
-    int xpReward;
-    AbilityScore stats;
-public:
-    virtual ~Monster() = default;
-    virtual void takeDamage(int damage) = 0;
-    virtual int getAttackRoll() = 0;
-    virtual int getDamageRoll() = 0;
-    virtual bool isDead() const = 0;
-    
-    // Getter
-    virtual std::string getId() const = 0;
-    virtual std::string getName() const = 0;
-    virtual int getAc() const = 0;
-    virtual int getXpReward() const = 0;
-    virtual int getHp() const = 0;
-    virtual int getMaxHp() const = 0;
-    
-    // 상태이상 유발 및 관리용 (v0.8.0 추가)
-    virtual void setPoison(int turns) = 0;
-    virtual void setParalysis(int turns) = 0;
-    virtual int getPoisonTurns() const = 0;
-    virtual int getParalysisTurns() const = 0;
-    virtual void processTurnEffects(std::vector<std::string>& logOutput) = 0;
-};
-
-// 6. 스킬 및 마법 추상 인터페이스 (v0.8.0 설계 구체화)
-enum class SkillTargetType {
-    SINGLE_FOE,
-    ALL_FOES,
-    SINGLE_ALLY,
-    ALL_ALLIES,
-    SELF
-};
-
-class Skill {
-public:
-    virtual ~Skill() = default;
-    virtual std::string getId() const = 0;
-    virtual std::string getName() const = 0;
-    virtual std::string getDescription() const = 0;
-    virtual int getRequiredLevel() const = 0;
-    virtual bool isSpell() const = 0;
-    virtual int getSpellLevel() const = 0;
-    virtual SkillTargetType getTargetType() const = 0;
-    
-    // 전투 시 효과 시전 처리
-    virtual bool execute(class Character& caster,
-                         std::vector<std::shared_ptr<class Character>>& allies,
-                         std::vector<std::shared_ptr<Monster>>& foes,
-                         int targetIdx,
-                         std::vector<std::string>& logOutput) = 0;
-};
-```
-
-## 12. 저장/설정/진행 정책
-* **세이브 스키마 버전:** `schemaVersion: 4`. v1~v3 저장은 파티 진행을 보존하고 저장된 session seed에서 3층 월드를 결정론적으로 생성해 v4 메모리 모델로 마이그레이션한다.
-  * v1 예제는 `tests/fixtures/save_v1.json`에만 두며 제품 기본 저장이나 package 입력으로 취급하지 않는다.
-  * v1/v2 캐릭터는 `age: 0`, `gender: "unspecified"`로 이관한다. 신규 생성은 `age` 18~80과 `male|female|non_binary`만 허용한다.
-* **저장 위치:** OS별 per-user data directory의 UTF-8 `save.json` 및 `config.json`.
-* **내구성:** 같은 디렉터리의 임시 파일에 쓰고 flush/fsync가 성공한 뒤 원본을 `.bak`으로 회전하고 원자 교체한다. 실패 시 마지막 정상 원본을 유지하고 typed result를 UI에 전달한다.
-  * primary/backup save의 leaf symlink는 read/write 모두 거부한다. OS가 제공하거나 사용자가 지정한 per-user data parent 경로의 symlink/junction은 신뢰하되 Windows reparse-point 실기는 `UNVERIFIED`다.
-* **손상 복구:** 손상 파일은 `.corrupt-<timestamp>.json`으로 격리한다. 유효한 `.bak`이 있으면 복구 후보로 읽되 손상 원본을 자동 초기화하지 않는다. 백업도 없으면 New Game을 명시적으로 선택하기 전까지 디스크를 덮어쓰지 않는다.
-  * TPK 또는 Title Continue가 checkpoint를 복구하지 못하면 기존 in-memory Party는 진단용으로 보존하되 `recoveryPending`이 된다. 이 상태에서는 일반 저장과 종료 자동 저장을 금지한다.
-  * 성공적인 checkpoint load 또는 확인된 New Game만 `recoveryPending`을 해제한다. memory-only `resetToDefault()`는 해제 권위가 아니다.
-  * primary가 없고 backup만 손상된 경우에도 backup을 고유 quarantine path로 이동하고 같은 candidate를 반복 시도하지 않는다.
-* **초기 저장값:** `100 Gold`, `pot_heal` 2개, `pot_mana` 1개, 파티원/활성·완료 퀘스트/중요품 없음, 신규 3층 월드, `campaignCompleted: false`.
-* **진행 정책:** 던전 중간 좌표 재개는 지원하지 않는다. 월드 snapshot과 현재 Party/Quest/RNG를 하나의 전체 세션 checkpoint로 저장한다.
-  * 탐험 변경은 최대 2초 간격으로 합쳐 저장하고 층 이동, 목표 해결, 전투 정산, 마을 귀환과 정상 창 종료에서 즉시 저장한다. 비정상 종료 시 마지막 성공 checkpoint 이후 최대 2초의 안개 변경은 손실될 수 있다.
-* **TPK 정책:** 가장 최근 성공한 전체 세션 checkpoint로 돌아가며 파일 초기화와 별개다. New Game만 확인 후 새 기본 저장을 쓴다.
-* **설정 기본값:** 언어 `KO`. 오디오는 비목표이므로 volume 필드는 v1 호환 읽기만 하고 v2 canonical config에는 쓰지 않는다.
-* **RNG checkpoint:** `SessionRng`는 session seed와 원시 `mt19937` draw count를 기록한다. save는 `lastSessionSeed`와 `sessionRngDrawCount`를 함께 저장하며 Continue는 두 값을 복원한 다음 난수부터 이어간다. New Game은 새 entropy seed를 만든 뒤 최초 checkpoint를 저장한다.
-  * v1/v2처럼 seed가 없는 legacy save는 canonical JSON에 version salt를 더한 FNV-1a 32-bit 값에서 non-zero seed를 결정론적으로 만들고 world/RNG 양쪽에 같은 seed와 draw count 0을 사용한다.
-  * mutation 저장이 pre-commit 실패하면 디스크 재로드가 아니라 작업 직전 in-memory snapshot으로 Party·Quest·World와 global RNG를 함께 복원한다.
-* **v4 엄격성:** v4 root/character/quest/world의 canonical 필드는 모두 필수다. 누락·unknown ID·중복 ID·교차 상태 불일치는 `Corrupt`이며 tolerant default는 v1~v3 이관에만 허용한다.
-* **멱등성:** gameplay와 RNG 소비가 없는 `save -> load -> save`는 set 기반 필드를 정렬하여 exact byte가 같아야 한다.
-* **종료:** 활성 세션의 정상 창 닫기는 저장 `Saved`에서만 즉시 종료한다. 일반 save failure/`CommittedDurabilityUnknown`은 저장 재시도 또는 저장 없이 종료를 제공한다. `recoveryPending`에서는 자동 저장하지 않고 Enter로 checkpoint load를 재시도하거나 Esc로 저장 없이 종료한다.
-
-* **저장 결과 계약:** `PersistenceResult{status, path, message}`를 사용한다. `Saved/Loaded/NotFound/RecoveredFromBackup/CommittedDurabilityUnknown/Corrupt/UnsupportedVersion/IoError/RecoveryPending`을 구분한다. `RecoveryPending`은 복구 성공 또는 명시적 New Game 전까지 write가 금지된 상태다.
-* **저장 파일 구조 계약 (Save File Contract - save.json v4):**
-  ```json
-  {
-      "schemaVersion": 4,
-      "gold": 100,
-      "inventory": ["pot_heal", "pot_heal", "pot_mana"],
-      "keyItems": ["key_moon_seal"],
-      "members": [
-          {
-              "name": "Ragnar",
-              "age": 20,
-              "gender": "male",
-              "class": 0,
-              "level": 1,
-              "hp": 12,
-              "maxHp": 12,
-              "xp": 0,
-              "abilities": {
-                  "strength": 15,
-                  "dexterity": 12,
-                  "constitution": 14,
-                  "intelligence": 10,
-                  "wisdom": 8,
-                  "charisma": 11
-              },
-              "spellSlots": 0,
-              "maxSpellSlots": 0,
-              "poisonTurns": 0,
-              "paralysisTurns": 0,
-              "equipment": {
-                  "weapon": "wpn_longsword",
-                  "armor": "arm_scale",
-                  "shield": ""
-              }
-          }
-      ],
-      "activeQuests": [
-          {
-              "id": "qst_recover_moon_seal",
-              "type": 3,
-              "targetId": "key_moon_seal",
-              "targetCount": 1,
-              "currentCount": 1,
-              "readyToReport": true,
-              "targetFloor": 1
-          }
-      ],
-      "completedQuestIds": [],
-      "campaignCompleted": false,
-      "lastSessionSeed": 0,
-      "sessionRngDrawCount": 0,
-      "world": {
-          "version": 1,
-          "seed": 305419896,
-          "floors": [
-              {"tiles": ["####################"], "visited": ["00000000000000000000"], "stepped": ["00000000000000000000"]}
-          ],
-          "objects": [
-              {"id": "obj_moon_seal", "questId": "qst_recover_moon_seal", "targetId": "key_moon_seal", "kind": "quest_item", "state": "resolved", "floor": 1, "x": 17, "y": 15}
-          ]
-      }
-  }
-  ```
-  * 위 `floors`/`objects` 배열은 필드 형태를 보여주기 위해 축약했다. 실제 저장은 정확히 3개 층, 층마다 20자의 `tiles/visited/stepped` 행 20개와 canonical 목표 3개를 포함한다.
-
-* **설정 파일 구조 계약 (Config File Contract - config.json):**
-  ```json
-  {
-      "schemaVersion": 2,
-      "language": 0,
-      "textScale": 100,
-      "highContrast": true
-  }
-  ```
-
-## 13. 동결된 공식
-
-### 13.1 캐릭터 레벨업 공식
-* 레벨 1 -> 2 경험치: `300 XP`
-* 레벨 2 -> 3 경험치: `900 XP`
-* 레벨업 시 HP 증가 공식: `기존 HP + max(1, Hit Die 굴림값 + CON 보정치)`.
-* 레벨업 시 직업과 레벨에 매칭되는 스킬이 습득되어 캐릭터의 스킬 풀(`m_skills`)에 자동 추가된다.
-
-### 13.2 몬스터 처치 및 퀘스트 보상 공식
-* 경험치 분배: `Monster.xpReward / 살아있는 파티원 수`
-* 골드 획득: 전투 종료 후 `(1d10 * 몬스터 레벨) Gold` (여기서 몬스터 레벨은 몬스터 종류별 고정 등급)
-
-### 10.5 미니맵 오토맵 및 자동 이동 명세
-* **오토맵 (Automap) 렌더링 규칙:**
-  * 직접 밟은 바닥: 밝은 네온 그린 (`COLOR_BRIGHT_GREEN`).
-  * 안개만 해제된 바닥: 어두운 녹색 (`COLOR_MUTED`).
-  * 드러난 벽: 회색 (`#808080`).
-  * 미답지: 검정색 (`COLOR_BG`).
-* **자동 이동 알고리즘:**
-  * 미니맵 마우스 왼쪽 클릭 좌표 역산 -> BFS 최단 경로 산출 -> 0.1초 딜레이 칸 이동 -> 10% 인카운터 판정 (인카운터 시 즉시 파기 및 전투 진입). 키 입력 시 캔슬.
-  * 자동 이동도 quest boss/BossGate 칸에 실제 진입하면 전투를 시작한다. 중요품·NPC·계단은 목적지 또는 중간 노드여도 `E` 없이는 활성화하지 않는다.
-
-### 10.6 캐릭터 정보 관리 및 인벤토리 시스템 명세
-* 마을/던전에서 `I`/`C` 누르면 `CharacterInfoState`로 `pushState` 진입. `ESC` 등으로 `popState`.
-* 마을/던전/전투 상태에서 설정 단축키 `O`를 누르면 `SettingsState`로 `pushState` 진입, 완료 시 `popState` 복귀. (기존 S키는 던전 방향이동과의 충돌을 방지하기 위해 배제)
-* 좌측 상세 정보 및 장비 슬롯 / 우측 파티 공용 골드 및 인벤토리 목록 분할 렌더링.
-* `Tab` 및 방향키 영역 포커스 전환.
-* **아이템 사용 및 장착:**
-  * **장착 해제 (장비 슬롯 + Enter):** 슬롯 탈거 및 인벤토리에 추가.
-  * **아이템 소모 (인벤토리 목록 + Enter):**
-    * 치유 물약 사용 시 대상 치유 적용.
-    * **[v0.8.0 추가]** 마나 물약(`pot_mana`), 버프 물약(`pot_strength`/`pot_dexterity`), 해독 스크롤(`scr_cure`) 등 각 아이템 성격에 따른 상태이상 치료 및 버프/주문 슬롯 충전 처리 적용.
-    * 장비 장착 시 클래스 제한 규칙 엄수 (Mage/Rogue 장착 제한).
-
-## 14. 실데이터 기준표 (Content Data - v0.8.0 확장)
-
-### 14.1 아이템 대폭 확장 목록
-| ID | 이름 | 구분 | 슬롯 | 가격 | 효과/스펙 | 착용 불가 클래스 |
-| --- | --- | --- | --- | --- | --- | --- |
-| `wpn_dagger` | 단검 | 무기 | 주손 | 10 G | 1d4 피해 | 없음 |
-| `wpn_longsword` | 롱소드 | 무기 | 주손 | 30 G | 1d8 피해 | Mage, Rogue |
-| `wpn_mace` | 메이스 | 무기 | 주손 | 20 G | 1d6 피해 | Mage |
-| `wpn_greatsword` | 그레이트소드 | 무기 | 주손 | 60 G | 2d6 피해 (양손 무기 - 방패 불가) | Mage, Rogue, Cleric |
-| `wpn_staff` | 마법 지팡이 | 무기 | 주손 | 15 G | 1d4 피해, INT 보정치 +1 효과 제공 | Warrior, Rogue, Cleric |
-| `wpn_rapier` | 레이피어 | 무기 | 주손 | 40 G | 1d8 피해 (DEX 보정 가능) | Mage, Cleric |
-| `arm_robe` | 마법사 로브 | 갑옷 | 몸통 | 5 G | AC +0 | Warrior, Rogue, Cleric |
-| `arm_leather` | 가죽 갑옷 | 갑옷 | 몸통 | 15 G | AC +1 | Mage |
-| `arm_scale` | 스케일 메일 | 갑옷 | 몸통 | 45 G | AC +4 (DEX 보정 최대 +2 제한) | Mage, Rogue |
-| `arm_chain` | 체인 메일 | 갑옷 | 몸통 | 75 G | AC 16 고정 (DEX 미적용) | Mage, Rogue |
-| `arm_plate` | 플레이트 아머 | 갑옷 | 몸통 | 120 G | AC 18 고정 (DEX 미적용, STR 제한 15) | Mage, Rogue, Cleric |
-| `shd_round` | 라운드 실드 | 방패 | 보조손 | 20 G | AC +2 | Mage, Rogue |
-| `shd_tower` | 타워 실드 | 방패 | 보조손 | 50 G | AC +4 (STR 제한 14) | Mage, Rogue, Cleric |
-| `pot_heal` | 치유 물약 | 소모품 | - | 15 G | 사용 시 HP 2d4 + 2 회복 | 없음 |
-| `pot_greater_heal` | 고급 치유 물약 | 소모품 | - | 40 G | 사용 시 HP 4d4 + 4 회복 | 없음 |
-| `pot_mana` | 마나 물약 | 소모품 | - | 30 G | 사용 시 주문 슬롯 1개 충전 | 없음 (마법사용 불가 상태 시 무효) |
-| `pot_strength` | 힘의 물약 | 소모품 | - | 25 G | 전투 중 STR +3 버프 (전투 종료 시 소멸) | 없음 |
-| `pot_dexterity` | 민첩의 물약 | 소모품 | - | 25 G | 전투 중 DEX +3 버프 (전투 종료 시 소멸) | 없음 |
-| `scr_cure` | 해독 스크롤 | 소모품 | - | 20 G | 독 상태이상 즉시 치유 | 없음 |
-
-* **상점 거래 제약 사항 (동결된 설계 결정):**
-  * 모험가들의 기본적인 지원을 위해 상점 구매(`SHOP_BUY`) 카탈로그에는 기본 물품 8종(`wpn_dagger`, `wpn_longsword`, `wpn_mace`, `arm_leather`, `arm_scale`, `arm_chain`, `shd_round`, `pot_heal`)만 상시 진열 및 판매한다.
-  * 그 외의 고급 무기/방어구(`wpn_greatsword`, `wpn_staff`, `wpn_rapier`, `arm_robe`, `arm_plate`, `shd_tower`) 및 특수 소모품(`pot_greater_heal`, `pot_mana`, `pot_strength`, `pot_dexterity`, `scr_cure`)은 상점에서 다이렉트로 구매할 수 없으며, 오직 던전 탐험 파밍이나 퀘스트 완료 보상으로만 획득해야 한다.
-  * 단, 파티 공용 인벤토리에 들어 있는 모든 종류의 아이템은 상점 판매(`SHOP_SELL`)를 통해 원가 가격의 **50%** 골드로 즉시 처분하여 현금화할 수 있다.
-  * `ItemFactory::getShopCatalog()`는 구매 가능한 위 기본 8종만 반환하며 Town 구매 UI도 이 registry를 사용한다.
-* **던전 획득원:** 일반 전투는 각 몬스터의 drop 후보가 있을 때 승리 정산마다 35% 확률로 후보 중 1개를 지급한다. 최종 `mon_dragon_whelp` 전투는 `arm_plate`와 `shd_tower`를 모두 보장 지급한다.
-  * Goblin=`pot_mana`, Skeleton=`wpn_greatsword`, Giant Spider=`scr_cure`, Orc=`wpn_rapier`, Goblin Shaman=`pot_strength|pot_dexterity`, Ghoul=`pot_greater_heal`, Dragon Whelp=`arm_plate|shd_tower`.
-* **퀘스트 item reward:** Moon Seal=`pot_strength`, Crypt Warden=`wpn_rapier`, Missing Scout=`scr_cure`+`pot_greater_heal`. 완료 ID는 저장되어 같은 퀘스트가 다시 보상되지 않는다.
-
-### 14.2 몬스터 대폭 확장 목록
-| ID | 이름 | Tier | HP | AC | 주 공격 | XP | 특수 행동 / 상태이상 유발 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `mon_kobold` | 코볼트 | 1 | 5 | 11 | 단검 (1d4 + 1) | 25 | 특이사항 없음 |
-| `mon_goblin` | 고블린 | 1 | 7 | 12 | 단검 (1d6 + 1) | 50 | 특이사항 없음 |
-| `mon_skeleton` | 스켈레톤 | 1 | 9 | 11 | 쇼트소드 (1d6 + 2) | 50 | 참격/관통 피해 50% 감쇄, 타격 무감쇄 |
-| `mon_giant_spider` | 거대 거미 | 2 | 12 | 12 | 물기 (1d6 + 1) | 75 | 공격 적중 시 25% 확률로 대상에게 **독(Poison)** 유발 |
-| `mon_orc` | 오크 | 2 | 15 | 13 | 그레이트액스 (1d12 + 2) | 100 | 분노: HP 절반(7) 이하 시 물리 피해 주사위 결과에 +2 고정 가산 |
-| `mon_goblin_shaman`| 고블린 주술사 | 2 | 12 | 11 | 지팡이 (1d4) | 100 | 매 턴 35% 확률로 **Magic Missile** (1d4+1 자동 필중 마법 피해) 시전 |
-| `mon_ghoul` | 구울 | 3 | 18 | 12 | 발톱 (1d8 + 2) | 120 | 공격 적중 시 20% 확률로 대상에게 **마비(Paralysis)** 유발 |
-| `mon_dragon_whelp` | 새끼 용 | 4 | 35 | 14 | 물기 (1d8 + 3) | 250 | 최종 관문 전용; 3턴마다 **화염 브레스** 발사 |
-| `mon_crypt_warden` | 묘실 수호자 | 3 | 28 | 14 | 철퇴 (1d8 + 3) | 200 | 2층 퀘스트 전용; 일반 조우/드롭 풀 제외 |
-
-### 14.3 퀘스트 기본 목록
-| ID | 이름 | 타입 | 층/대상 | 골드 | XP | 아이템 |
-| --- | --- | --- | --- | --- | --- | --- |
-| `qst_recover_moon_seal` | 월광 인장 회수 | RETRIEVE_KEY_ITEM | B1 / `key_moon_seal` | 75 G | 150 XP | `pot_strength` |
-| `qst_defeat_crypt_warden` | 묘실 수호자 토벌 | DEFEAT_BOSS | B2 / `mon_crypt_warden` | 150 G | 300 XP | `wpn_rapier` |
-| `qst_find_missing_scout` | 실종 정찰병 수색 | FIND_NPC | B3 / `npc_missing_scout` | 200 G | 400 XP | `scr_cure`, `pot_greater_heal` |
-
-`qst_clear_kobolds`, `qst_collect_maces`, `qst_hunt_spiders`는 v1~v3 활성 세이브의 완료/보고를 위한 legacy registry에만 남긴다.
-
-## 15. 단계별 로드맵
-* **Phase 1~4:** 기반 시스템 완료 (이전 버전 작업 완료).
-* **Phase 5: [v0.8.0] 아이템, 몬스터, 스펠/스킬 대폭 확장 및 물약 효과 통합**
-  * `Skill` 인터페이스 및 구체 직업별 스킬(총 12종) 클래스 설계 및 통합.
-  * 캐릭터 모델(`Character`)에 독, 마비 등의 상태이상 및 버프 속성 탑재, 턴 진행 업데이트 루프 연동.
-  * `ConcreteItems.hpp` 및 `ItemFactory.cpp` 에 신규 무기/방어구 및 소모품 6종 추가 연동 및 팩토리 매핑.
-  * `CharacterInfoState` 및 `CombatState` 에 물약 사용 효과(마나 충전, 스탯 버프, 해독 등) 분기 구현.
-  * `Monster` 에 상태이상 추적 변수 탑재 및 `MonsterFactory.cpp` 확장 (거대 거미, 구울, 주술사, 새끼 용 추가).
-  * 전투 시 `Skill/Spell` 선택 팝업 TUI 윈도우 인터페이스 구현 및 타겟팅 연동.
-  * `TestHarness`에 신규 스킬, 상태이상 데미지 갱신 테스트 코드 탑재 및 검증.
-* **Phase 6: [v0.9.0] 설정 기능 및 다국어(i18n) 실시간 전환 시스템**
-  * 외부 JSON 파일(`assets/lang/ko.json`, `en.json`, `ja.json`, `zh_tw.json`, `zh_cn.json`)을 사용하는 `LocalizationManager` 싱글톤 구현.
-  * UI chrome 텍스트를 `LocalizationManager`의 다국어 리소스 키로 출력한다. 콘텐츠 이름/설명과 전투 로그의 잔여 literal은 전체 locale 실화면 gate가 닫힐 때까지 미완료로 추적한다.
-  * 타이틀 및 게임 내에서 진입 가능한 `SettingsState` 구현.
-  * `SettingsState` 조작을 통해 언어, text scale, high contrast를 OS별 per-user `config.json`에 원자 저장한다. BGM/SFX는 비목표다.
-  * `TestHarness`에 다국어 리소스 키 탐색 정합성 및 실시간 언어 전환 검증 테스트 추가.
-* **Phase 7: [v0.9.1] 상점 판매 시스템 고도화 및 세이브 유실 핫픽스**
-  * `TownSubState` FSM 세분화 (`SHOP` -> `SHOP_BUY`, `SHOP_SELL` 상태 기계 분기 처리).
-  * `TownState`에서 인벤토리 아이템 판매 기능 구현 (아이템 가치의 50% 골드 지급 및 가방 인덱스 삭제).
-  * `TownState` 성주실 퀘스트 수주/보고 단계 시 디스크 영속 저장(`party.saveToFile()`)을 보완하여 데이터 분실 방지.
-  * `TestHarness` 내 `testShopSelling()`을 구현하여 판매 골드 연산 및 파일 정합성 자동 단언 검증 추가.
-* **Phase 10: [v0.9.4] 감사 기반 테스트 저장소 격리 및 Town 키 완전성 보강**
-  * `TestHarness`는 사용자 게임 저장소가 아닌 고유 임시 디렉터리를 기본 세이브 경로로 사용하고, 테스트 전후 사용자 `save.json`·`config.json`의 바이트 불변성을 단언한다.
-  * Town 허브가 참조하는 필수 번역 키는 5개 언어 JSON에 동일하게 존재해야 하며, 누락 시 회귀 테스트가 실패한다.
-  * CJK 폰트의 실제 혼합 문자열 가독성과 제3자 자산 재배포 근거는 별도 릴리즈 게이트로 관리하며, 코드포인트 존재 검사만으로 완료 처리하지 않는다.
-* **Phase 11: [v0.10.0] 3층 영속 월드와 목적형 퀘스트**
-  * New Game 귀속 `DungeonWorld`, schema v4 전체 snapshot과 v1~v3 결정론적 이관.
-  * 회수·2층 고정 보스·3층 NPC 탐색, 중요품과 성 보고 일회성 보상.
-  * `E` 상호작용, `Q` 일지, 층/발견 목표 미니맵 표시와 5 locale raster 검증.
-
-## 16. 명령어와 검증 기준
-* **빌드 및 실행 명령어:**
-  ```bash
-  cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug
-  cmake --build build/debug --parallel 2
-  ctest --test-dir build/debug --output-on-failure
-  ./build/debug/Crawlmaster
-  ```
-* **Release 및 패키지 gate:**
-  ```bash
-  cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release
-  cmake --build build/release --parallel 2
-  ctest --test-dir build/release --output-on-failure
-  cpack --config build/release/CPackConfig.cmake
-  ```
-* 테스트는 `assert`에 의존하지 않는 Release-safe expectation을 사용한다. 의도적 실패는 non-zero exit로 검증한다.
-* Linux 패키지는 임의의 process CWD에서 기동하고 bundled asset을 찾을 수 있어야 한다.
-* Windows package의 0.9.4 hosted 증거는 current v0.10에 승계하지 않는다. v0.10 immutable commit의 hosted MSVC build/test/package/startup과 attestation은 `UNVERIFIED` gate다.
-
-## 17. Turn 1 감사 remediation 계약
-
-* **수직 슬라이스:** 시작 계단, 중앙 랜드마크 문, 가장 먼 도달 가능 타일의 보스 관문, `mon_dragon_whelp` 최종 전투, 결과 화면을 한 런으로 연결한다.
-* **콘텐츠 도달성:** 상점 8종과 직업 시작 장비 외 9종은 monster drop 또는 일회성 quest reward에 명시적으로 연결한다. 모든 19개 item은 획득·장착/사용·판매·저장 중 적용 가능한 경로를 갖는다.
-* **퀘스트:** 신규 보드는 `qst_recover_moon_seal`, `qst_defeat_crypt_warden`, `qst_find_missing_scout`를 제공한다. 이전 3개 수량형 퀘스트는 v1~v3 활성 저장 호환용이며 완료 ID가 모든 중복 보상을 막는다.
-* **모집:** 후보의 이름/직업을 preview하고 `Enter`로 확정, `R`로 reroll, `Esc`로 취소한다.
-* **전투 선택:** Item과 `SINGLE_ALLY` 스킬은 item/target preview와 confirm/cancel을 거친다. 효과가 없는 시도는 자원과 행동을 소비하지 않는다.
-  * 이 no-op 비소비 규칙은 CharacterInfo의 비전투 소모품 사용에도 동일하게 적용한다.
-* **퀘스트 API:** 제품 save/UI는 canonical registry ID만 허용한다. public constructor는 registry 정의 구현용이며 `Party::acceptQuest`는 custom/변조 정의를 거부한다.
-* **전투 공식:** 무기 dice count/sides, 자연 1/20, Bless +2, 장비 class/STR 제한, monster damage type resistance, `1d10 * monster tier` 골드를 하나의 규칙 계층과 seed fixture로 검증한다.
-* **난이도 곡선:** 일반 조우는 탐험 진행도 0~33%, 34~66%, 67~99%의 세 tier를 사용한다. Dragon Whelp는 최종 관문 전용이며 일반 조우에서 제외한다.
-* **UI:** HUD와 CharacterInfo는 실제 0~4인 Party snapshot, HP/사망/독/마비/STR·DEX buff/Bless를 표시한다. 고정 1024x768 TUI 본문은 14px, 핵심 상태·선택은 16px 이상이며 핵심 텍스트 대비 4.5:1 이상을 목표로 한다.
-* **i18n/input:** 화면 chrome뿐 아니라 item/monster/skill 이름·설명과 사용자 전투/상태 로그도 locale key+placeholder로 출력한다. `O`는 Town의 모든 substate와 Combat의 플레이어 조작 상태에서 Settings를 열고, `Esc`는 현재 overlay를 먼저 취소한다. 적 턴에는 추가 입력으로 상태를 변형하지 않는다.
-* **i18n 검증:** 5 locale × 75/100/200%에서 key parity, 필수 placeholder, text bounds/wrap/focus/input transcript를 자동 검사하고 실제 CJK raster/high-DPI 판독은 별도 실행 증거가 있을 때만 완료한다.
-* **배포/권리:** source `4f988483bf5cbcfdce4c79a6aabab4a67a7043f9`의 0.9.4 Linux/Windows artifact와 native SLSA/SPDX attestation은 historical evidence다. current v0.10 immutable commit의 hosted 증거는 `UNVERIFIED`이며, 폰트 원출처·재배포 권리와 법률/지원 주체는 사람 승인 전까지 `Human Review Required`다.
-* 이 섹션은 Turn 1 finding과 충돌하는 이전 완료 표현보다 우선한다. 실제 구현·테스트·패키지 증거가 없는 항목은 완료로 표시하지 않는다.
+* **로컬 빌드/검증:**
+  * `cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug && cmake --build build/debug --parallel`
+  * `ctest --test-dir build/debug --output-on-failure --no-tests=error`
+  * `cmake -S . -B build/release -DCMAKE_BUILD_TYPE=Release && cmake --build build/release --parallel`
+  * `ctest --test-dir build/release --output-on-failure --no-tests=error`
+  * `cpack --config build/release/CPackConfig.cmake`
+* **원격 릴리스 (GitHub Actions `.github/workflows/ci.yml`):**
+  * `v*` 태그 푸시 시 `ubuntu-24.04` 및 `windows-2022` 매트릭스 빌드 → CTest → CPack(`.tar.gz` / `.zip` + `.sha256`) → 임의 CWD 리소스/기동 스모크 → SPDX SBOM & Grype 스캔 → SLSA/SBOM 증명 → GitHub Release 자동 생성 및 양 플랫폼 릴리스 아티팩트 첨부.

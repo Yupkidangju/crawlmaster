@@ -127,7 +127,8 @@ def main() -> int:
         )
 
     tree_digest = hashlib.sha256("".join(sorted(verification_hashes)).encode("ascii")).hexdigest()
-    document["name"] = f"Crawlmaster-0.9.4-{args.platform}-artifact-sbom"
+    pkg_version = str(root_package.get("versionInfo", "1.0.0"))
+    document["name"] = f"Crawlmaster-{pkg_version}-{args.platform}-artifact-sbom"
     document["documentNamespace"] = f"https://crawlmaster.local/spdx/artifact/{tree_digest}"
     document["creationInfo"]["created"] = args.created
     document["creationInfo"]["creators"] = ["Tool: scripts/generate_release_sbom.py"]

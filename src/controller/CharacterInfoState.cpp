@@ -1,678 +1,462 @@
-// [v0.6.0] CharacterInfoState.cpp 신규 작성
-// 캐릭터 스탯 정보, 능력치 및 장착 장비 현황을 확인하고 공용 인벤토리의 아이템을 소모 및 장착하는 UI 및 이벤트 제어 클래스 구현.
-
 #include "controller/CharacterInfoState.hpp"
+#include "core/AudioManager.hpp"
 #include "core/Game.hpp"
-#include "model/Party.hpp"
-#include "model/Character.hpp"
-#include "model/ConcreteItems.hpp"
-#include "model/CombatActionRules.hpp"
 #include "core/LocalizationManager.hpp"
-#include <random>
+#include "model/CombatActionRules.hpp"
+#include "model/ConcreteItems.hpp"
+#include "model/Equipment.hpp"
+#include "model/Skill.hpp"
+#include "view/UiSystem.hpp"
+#include "view/UiTheme.hpp"
+
 #include <algorithm>
-#include <iostream>
+#include <array>
 
 namespace crawl {
-namespace {
 
-std::string genderLabel(Gender gender, const LocalizationManager& localization) {
-    switch (gender) {
-        case Gender::MALE: return localization.get("GENDER_MALE");
-        case Gender::FEMALE: return localization.get("GENDER_FEMALE");
-        case Gender::NON_BINARY: return localization.get("GENDER_NON_BINARY");
-        case Gender::UNSPECIFIED: return localization.get("GENDER_UNSPECIFIED");
+CharacterInfoState::CharacterInfoState(Game& game, int initialMemberIndex)
+    : m_game(game), m_selectedMemberIdx(initialMemberIndex) {
+    const int cnt = m_game.getParty().getMemberCount();
+    if (cnt > 0) m_selectedMemberIdx = std::clamp(m_selectedMemberIdx, 0, cnt - 1);
+}
+
+void CharacterInfoState::equipOrUseInventoryItem(int invIndex) {
+    auto& party = m_game.getParty();
+    const auto& lm = LocalizationManager::getInstance();
+    auto member = party.getMember(m_selectedMemberIdx);
+    const auto& inv = party.getInventory();
+    if (!member || invIndex < 0 || invIndex >= static_cast<int>(inv.size())) return;
+
+    auto item = inv[static_cast<std::size_t>(invIndex)];
+    if (auto eq = std::dynamic_pointer_cast<Equipment>(item)) {
+        if (!member->canEquip(*eq)) {
+            m_statusMessage = lm.get("CHAR_INFO_CANNOT_EQUIP");
+            AudioManager::getInstance().playSfx("sfx_ui_error");
+            return;
+        }
+        auto prev = member->getEquippedItem(eq->getSlot());
+        if (member->equip(eq)) {
+            party.removeItem(invIndex);
+            if (prev) party.addItem(prev);
+            party.saveToFile();
+            AudioManager::getInstance().playSfx("sfx_ui_click");
+            m_statusMessage = lm.format("CHAR_INFO_EQUIPPED", {{"item", eq->getDisplayName()}});
+        }
+        return;
     }
-    return localization.get("GENDER_UNSPECIFIED");
-}
 
-const char* traitKey(CharacterClass characterClass) {
-    switch (characterClass) {
-        case CharacterClass::WARRIOR: return "TRAIT_WARRIOR";
-        case CharacterClass::MAGE: return "TRAIT_MAGE";
-        case CharacterClass::ROGUE: return "TRAIT_ROGUE";
-        case CharacterClass::CLERIC: return "TRAIT_CLERIC";
+    if (auto cons = std::dynamic_pointer_cast<ConsumableItem>(item)) {
+        if (cons->isOffensiveBomb() || !CombatActionRules::canUseConsumable(*cons, *member)) {
+            m_statusMessage = lm.get("COMBAT_LOG_ITEM_NO_EFFECT");
+            AudioManager::getInstance().playSfx("sfx_ui_error");
+            return;
+        }
+        std::vector<std::string> logs;
+        auto membersCopy = party.getMembers();
+        cons->applyEffect(*member, membersCopy, logs);
+        party.removeItem(invIndex);
+        party.saveToFile();
+        AudioManager::getInstance().playSfx("sfx_heal");
+        m_statusMessage = logs.empty() ? lm.get("CHAR_INFO_USED") : logs.back();
     }
-    return "";
 }
 
-std::string ageLabel(const Character& character, const LocalizationManager& localization) {
-    return character.getAge() == 0 ? localization.get("GENDER_UNSPECIFIED")
-                                   : std::to_string(character.getAge());
-}
-
-} // namespace
-
-CharacterInfoState::CharacterInfoState(Game& game, bool persistChanges)
-    : m_game(game), m_persistChanges(persistChanges), m_focusArea(1), m_selectedCharIndex(0),
-      m_equipmentSlotIndex(0), m_inventoryIndex(0) {
-    m_statusMsg = LocalizationManager::getInstance().get("CHAR_INFO_STATUS_ACTIVE");
+void CharacterInfoState::unequipSlot(EquipSlot slot) {
+    auto& party = m_game.getParty();
+    auto member = party.getMember(m_selectedMemberIdx);
+    if (!member) return;
+    if (auto cur = member->getEquippedItem(slot)) {
+        member->unequip(slot);
+        party.addItem(cur);
+        party.saveToFile();
+        AudioManager::getInstance().playSfx("sfx_ui_click");
+        m_statusMessage = LocalizationManager::getInstance().format("CHAR_INFO_UNEQUIPPED", {{"item", cur->getDisplayName()}});
+    }
 }
 
 void CharacterInfoState::handleInput(const sf::Event& event) {
-    if (event.type == sf::Event::KeyPressed) {
-        auto& party = m_game.getParty();
-        int memberCount = party.getMemberCount();
-        const int invCount = static_cast<int>(party.getInventory().size());
+    auto& party = m_game.getParty();
+    const int mCount = party.getMemberCount();
+    if (mCount <= 0) {
+        if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape) m_game.getStates().popState();
+        return;
+    }
+    m_selectedMemberIdx = std::clamp(m_selectedMemberIdx, 0, mCount - 1);
+    auto member = party.getMember(m_selectedMemberIdx);
 
-        switch (event.key.code) {
-            case sf::Keyboard::Escape:
-            case sf::Keyboard::I:
-            case sf::Keyboard::C:
-                // 이전 상태(마을 혹은 던전)로 안전하게 복귀 (popState 호출)
-                m_game.getStates().popState();
-                break;
-
-            case sf::Keyboard::Num1:
-                if (memberCount >= 1) m_selectedCharIndex = 0;
-                break;
-            case sf::Keyboard::Num2:
-                if (memberCount >= 2) m_selectedCharIndex = 1;
-                break;
-            case sf::Keyboard::Num3:
-                if (memberCount >= 3) m_selectedCharIndex = 2;
-                break;
-            case sf::Keyboard::Num4:
-                if (memberCount >= 4) m_selectedCharIndex = 3;
-                break;
-
-            case sf::Keyboard::Tab:
-            case sf::Keyboard::Left:
-            case sf::Keyboard::Right:
-                // 포커스 전환 (0: 캐릭터 장비 영역, 1: 인벤토리 목록 영역)
-                m_focusArea = (m_focusArea == 0) ? 1 : 0;
-                break;
-
-            case sf::Keyboard::Up:
-                if (m_focusArea == 0) {
-                    m_equipmentSlotIndex = (m_equipmentSlotIndex + 2) % 3; // 0, 1, 2 순환
-                } else {
-                    if (invCount > 0) {
-                        m_inventoryIndex = (m_inventoryIndex + invCount - 1) % invCount;
-                    }
+    if (event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Left) {
+        const auto pos = m_game.mapPixelToLogical({event.mouseButton.x, event.mouseButton.y});
+        if (m_closeRect.contains(pos)) {
+            AudioManager::getInstance().playSfx("sfx_ui_click");
+            m_game.getStates().popState();
+            return;
+        }
+        for (int i = 0; i < mCount; ++i) {
+            if (m_memberTabRects[static_cast<std::size_t>(i)].contains(pos)) {
+                m_selectedMemberIdx = i;
+                AudioManager::getInstance().playSfx("sfx_ui_click");
+                return;
+            }
+        }
+        if (m_rowToggleRect.contains(pos)) {
+            member->toggleRow();
+            party.saveToFile();
+            AudioManager::getInstance().playSfx("sfx_ui_click");
+            return;
+        }
+        for (int s = 0; s < 4; ++s) {
+            if (m_equipSlotRects[static_cast<std::size_t>(s)].contains(pos)) {
+                unequipSlot(static_cast<EquipSlot>(s));
+                return;
+            }
+        }
+        for (int t = 0; t < 3; ++t) {
+            if (m_rightTabRects[static_cast<std::size_t>(t)].contains(pos)) {
+                m_rightTab = static_cast<RightTab>(t);
+                AudioManager::getInstance().playSfx("sfx_ui_click");
+                return;
+            }
+        }
+        if (m_rightTab == RightTab::INVENTORY) {
+            for (std::size_t i = 0; i < m_invRowRects.size(); ++i) {
+                if (m_invRowRects[i].contains(pos)) {
+                    m_selectedInvIdx = static_cast<int>(i);
+                    equipOrUseInventoryItem(m_selectedInvIdx);
+                    return;
                 }
-                break;
-
-            case sf::Keyboard::Down:
-                if (m_focusArea == 0) {
-                    m_equipmentSlotIndex = (m_equipmentSlotIndex + 1) % 3;
-                } else {
-                    if (invCount > 0) {
-                        m_inventoryIndex = (m_inventoryIndex + 1) % invCount;
-                    }
+            }
+        } else if (m_rightTab == RightTab::TALENTS) {
+            if (member->canChooseSpecialization()) {
+                const auto [sa, sb] = member->getAvailableSpecializations();
+                if (m_specRects[0].contains(pos) && member->chooseSpecialization(sa)) {
+                    party.saveToFile();
+                    AudioManager::getInstance().playSfx("sfx_levelup");
+                    m_statusMessage = member->getSpecializationName();
+                    return;
                 }
-                break;
+                if (m_specRects[1].contains(pos) && member->chooseSpecialization(sb)) {
+                    party.saveToFile();
+                    AudioManager::getInstance().playSfx("sfx_levelup");
+                    m_statusMessage = member->getSpecializationName();
+                    return;
+                }
+            }
+            for (int n = 0; n < 4; ++n) {
+                if (m_talentRects[static_cast<std::size_t>(n)].contains(pos)) {
+                    if (member->investTalent(static_cast<TalentNode>(n))) {
+                        party.saveToFile();
+                        AudioManager::getInstance().playSfx("sfx_levelup");
+                    } else {
+                        AudioManager::getInstance().playSfx("sfx_ui_error");
+                    }
+                    return;
+                }
+            }
+        }
+        return;
+    }
 
-            case sf::Keyboard::Enter:
-                if (m_focusArea == 0) {
-                    unequipSelectedSlot();
-                } else {
-                    if (invCount > 0 && m_inventoryIndex < invCount) {
-                        auto item = party.getInventory()[m_inventoryIndex];
-                        if (item->isEquipment()) {
-                            equipSelectedItem();
+    if (event.type == sf::Event::MouseButtonPressed && event.mouseButton.button == sf::Mouse::Right) {
+        AudioManager::getInstance().playSfx("sfx_ui_click");
+        m_game.getStates().popState();
+        return;
+    }
+
+    if (event.type != sf::Event::KeyPressed) return;
+    const auto key = event.key.code;
+    if (key == sf::Keyboard::Escape || key == sf::Keyboard::C) {
+        AudioManager::getInstance().playSfx("sfx_ui_click");
+        m_game.getStates().popState();
+    } else if (key == sf::Keyboard::Left) {
+        m_selectedMemberIdx = (m_selectedMemberIdx + mCount - 1) % mCount;
+        AudioManager::getInstance().playSfx("sfx_ui_hover");
+    } else if (key == sf::Keyboard::Right) {
+        m_selectedMemberIdx = (m_selectedMemberIdx + 1) % mCount;
+        AudioManager::getInstance().playSfx("sfx_ui_hover");
+    } else if (key >= sf::Keyboard::Num1 && key <= sf::Keyboard::Num4) {
+        const int idx = key - sf::Keyboard::Num1;
+        if (idx < mCount) m_selectedMemberIdx = idx;
+    } else if (key == sf::Keyboard::Tab) {
+        m_rightTab = static_cast<RightTab>((static_cast<int>(m_rightTab) + 1) % 3);
+        AudioManager::getInstance().playSfx("sfx_ui_click");
+    } else if (key == sf::Keyboard::F) {
+        member->toggleRow();
+        party.saveToFile();
+        AudioManager::getInstance().playSfx("sfx_ui_click");
+    } else if (key == sf::Keyboard::Up && m_rightTab == RightTab::INVENTORY) {
+        m_selectedInvIdx = std::max(0, m_selectedInvIdx - 1);
+    } else if (key == sf::Keyboard::Down && m_rightTab == RightTab::INVENTORY) {
+        const int n = static_cast<int>(party.getInventory().size());
+        if (n > 0) m_selectedInvIdx = std::min(n - 1, m_selectedInvIdx + 1);
+    } else if (key == sf::Keyboard::Enter && m_rightTab == RightTab::INVENTORY) {
+        equipOrUseInventoryItem(m_selectedInvIdx);
+    }
+}
+
+void CharacterInfoState::update(sf::Time /*deltaTime*/) {}
+
+void CharacterInfoState::draw(sf::RenderWindow& window) {
+    auto& assets = m_game.getAssets();
+    const auto& font = m_game.getFont();
+    const auto& lm = LocalizationManager::getInstance();
+    const auto& party = m_game.getParty();
+    const auto mouse = m_game.getMouseLogicalPosition();
+
+    sf::RectangleShape dim({Game::LOGICAL_WIDTH, Game::LOGICAL_HEIGHT});
+    dim.setFillColor(sf::Color(5, 6, 10, 212));
+    window.draw(dim);
+
+    const sf::FloatRect frame(36.0f, 24.0f, 1208.0f, 672.0f);
+    UiSystem::drawPanel(window, assets, frame, true, 244);
+
+    // 상단 파티원 탭
+    for (int i = 0; i < party.getMemberCount(); ++i) {
+        const auto m = party.getMember(i);
+        const sf::FloatRect r(56.0f + static_cast<float>(i) * 238.0f, 40.0f, 226.0f, 42.0f);
+        m_memberTabRects[static_cast<std::size_t>(i)] = r;
+        UiSystem::drawButton(window, assets, font, {
+            r, m->getName() + " (Lv." + std::to_string(m->getLevel()) + ")", std::to_string(i + 1),
+            m_selectedMemberIdx == i, r.contains(mouse), true, m_selectedMemberIdx == i
+        });
+    }
+    m_closeRect = {1048.0f, 40.0f, 176.0f, 42.0f};
+    UiSystem::drawButton(window, assets, font, {m_closeRect, lm.get("COMMON_BACK"), "Esc", false, m_closeRect.contains(mouse), true, false});
+
+    auto member = party.getMember(m_selectedMemberIdx);
+    if (!member) return;
+
+    // 좌측: 초상화 + 신원 + 진형 토글 + 6대 능력치
+    const sf::FloatRect leftP(56.0f, 96.0f, 340.0f, 580.0f);
+    UiSystem::drawPanel(window, assets, leftP, false, 224);
+
+    if (const sf::Texture* tex = assets.getPortraitTexture(member->getClassSlug())) {
+        sf::Sprite sp(*tex);
+        const auto sz = tex->getSize();
+        sp.setScale(140.0f / static_cast<float>(sz.x), 140.0f / static_cast<float>(sz.y));
+        sp.setPosition(leftP.left + 16.0f, leftP.top + 16.0f);
+        window.draw(sp);
+    }
+    UiSystem::drawText(window, font, member->getName(), {leftP.left + 168.0f, leftP.top + 20.0f}, 18, UiTheme::textGold(), true, 160.0f);
+    UiSystem::drawText(window, font, member->getClassString(), {leftP.left + 168.0f, leftP.top + 46.0f}, 14, UiTheme::textPrimary());
+    UiSystem::drawText(window, font, member->getSpecializationName(), {leftP.left + 168.0f, leftP.top + 68.0f}, 13, UiTheme::cyanAccent());
+    UiSystem::drawText(window, font, "Lv." + std::to_string(member->getLevel()) + " · AC " + std::to_string(member->getAc()),
+                       {leftP.left + 168.0f, leftP.top + 92.0f}, 14, UiTheme::textPrimary());
+    UiSystem::drawText(window, font, "XP " + std::to_string(member->getXp()) + " / " + std::to_string(member->getNextLevelXp()),
+                       {leftP.left + 168.0f, leftP.top + 116.0f}, 12, UiTheme::textMuted());
+
+    // 전열/후열 진형 전환 버튼
+    m_rowToggleRect = {leftP.left + 16.0f, leftP.top + 170.0f, leftP.width - 32.0f, 38.0f};
+    const std::string rowLbl = lm.get("CHAR_INFO_ROW") + ": " +
+                               lm.get(member->getRow() == CombatRow::FRONT ? "ROW_FRONT" : "ROW_BACK");
+    UiSystem::drawButton(window, assets, font, {m_rowToggleRect, rowLbl, "F", false, m_rowToggleRect.contains(mouse), true, false});
+
+    // HP / SP 게이지
+    const float hpR = static_cast<float>(member->getHp()) / static_cast<float>(std::max(1, member->getMaxHp()));
+    UiSystem::drawGaugeBar(window, font, {leftP.left + 16.0f, leftP.top + 220.0f, leftP.width - 32.0f, 22.0f},
+                           hpR, hpR, UiTheme::hpCrimson(), UiTheme::hpTrail(),
+                           "HP " + std::to_string(member->getHp()) + " / " + std::to_string(member->getMaxHp()));
+    if (member->getMaxSpellSlots() > 0) {
+        const float spR = static_cast<float>(member->getSpellSlots()) / static_cast<float>(member->getMaxSpellSlots());
+        UiSystem::drawGaugeBar(window, font, {leftP.left + 16.0f, leftP.top + 250.0f, leftP.width - 32.0f, 18.0f},
+                               spR, spR, UiTheme::spAzure(), UiTheme::spAzure(),
+                               "SP " + std::to_string(member->getSpellSlots()) + " / " + std::to_string(member->getMaxSpellSlots()));
+    }
+
+    // 6대 능력치
+    const auto ab = member->getAbilities();
+    const std::array<std::pair<const char*, int>, 6> stats = {{
+        {"STAT_STR", ab.strength}, {"STAT_DEX", ab.dexterity}, {"STAT_CON", ab.constitution},
+        {"STAT_INT", ab.intelligence}, {"STAT_WIS", ab.wisdom}, {"STAT_CHA", ab.charisma}
+    }};
+    for (int i = 0; i < 6; ++i) {
+        const float y = leftP.top + 286.0f + static_cast<float>(i) * 34.0f;
+        const int v = stats[static_cast<std::size_t>(i)].second;
+        const int mod = ab.getModifier(v);
+        UiSystem::drawText(window, font, lm.get(stats[static_cast<std::size_t>(i)].first), {leftP.left + 20.0f, y}, 14, UiTheme::textMuted());
+        UiSystem::drawGaugeBar(window, font, {leftP.left + 126.0f, y, 196.0f, 20.0f},
+                               static_cast<float>(v) / 22.0f, static_cast<float>(v) / 22.0f,
+                               UiTheme::borderGold(), UiTheme::borderGold(),
+                               std::to_string(v) + " (" + (mod >= 0 ? "+" : "") + std::to_string(mod) + ")");
+    }
+    UiSystem::drawText(window, font,
+                       "Crit: " + std::to_string(member->getCritThreshold()) + "+  ·  Lifesteal: " +
+                           std::to_string(member->getLifestealPct()) + "%",
+                       {leftP.left + 20.0f, leftP.top + 506.0f}, 13, UiTheme::cyanAccent());
+    if (!m_statusMessage.empty()) {
+        UiSystem::drawText(window, font, m_statusMessage, {leftP.left + 20.0f, leftP.top + 542.0f}, 13, UiTheme::textGold(), true, leftP.width - 40.0f);
+    }
+
+    // 중앙: 4개 장비 슬롯 (클릭으로 장착 해제)
+    const sf::FloatRect midP(408.0f, 96.0f, 326.0f, 580.0f);
+    UiSystem::drawPanel(window, assets, midP, false, 224);
+    UiSystem::drawText(window, font, lm.get("CHAR_INFO_EQUIPMENT"), {midP.left + 16.0f, midP.top + 14.0f}, 17, UiTheme::textGold());
+
+    static constexpr std::array<const char*, 4> kSlotKeys = {"SLOT_WEAPON", "SLOT_ARMOR", "SLOT_SHIELD", "SLOT_ACCESSORY"};
+    for (int s = 0; s < 4; ++s) {
+        const sf::FloatRect r(midP.left + 14.0f, midP.top + 52.0f + static_cast<float>(s) * 124.0f, midP.width - 28.0f, 112.0f);
+        m_equipSlotRects[static_cast<std::size_t>(s)] = r;
+        const auto eq = member->getEquippedItem(static_cast<EquipSlot>(s));
+        UiSystem::drawPanel(window, assets, r, r.contains(mouse), 232);
+        UiSystem::drawText(window, font, lm.get(kSlotKeys[static_cast<std::size_t>(s)]),
+                           {r.left + 12.0f, r.top + 10.0f}, 12, UiTheme::textMuted());
+        if (eq) {
+            UiSystem::drawText(window, font, eq->getDisplayName(), {r.left + 12.0f, r.top + 32.0f}, 15,
+                               UiTheme::rarityColor(eq->getRarity()), true, r.width - 24.0f);
+            std::string statLine;
+            if (eq->getSlot() == EquipSlot::WEAPON) {
+                statLine = std::to_string(eq->getDamageDiceCount()) + "d" + std::to_string(eq->getDamageDiceSides()) +
+                           " +" + std::to_string(eq->getUpgradeDamageBonus()) + " [" +
+                           UiTheme::elementShortCode(eq->getDamageType()) + "]";
+            } else {
+                statLine = "AC +" + std::to_string(eq->getAcBonus()) + " · HP +" + std::to_string(eq->getBonusHp());
+            }
+            UiSystem::drawText(window, font, statLine, {r.left + 12.0f, r.top + 58.0f}, 13, UiTheme::textPrimary());
+            UiSystem::drawText(window, font, lm.get("CHAR_INFO_CLICK_UNEQUIP"), {r.left + 12.0f, r.top + 84.0f}, 11, UiTheme::textMuted());
+        } else {
+            UiSystem::drawText(window, font, lm.get("CHAR_INFO_EMPTY"), {r.left + 12.0f, r.top + 44.0f}, 14, UiTheme::textMuted());
+        }
+    }
+
+    // 우측: 탭 패널 (인벤토리 / 특성·전직 / 스킬)
+    const sf::FloatRect rightP(746.0f, 96.0f, 478.0f, 580.0f);
+    UiSystem::drawPanel(window, assets, rightP, false, 224);
+
+    static constexpr std::array<const char*, 3> kTabs = {"TAB_INVENTORY", "TAB_TALENTS", "TAB_SKILLS"};
+    for (int t = 0; t < 3; ++t) {
+        const sf::FloatRect tr(rightP.left + 12.0f + static_cast<float>(t) * 154.0f, rightP.top + 12.0f, 148.0f, 36.0f);
+        m_rightTabRects[static_cast<std::size_t>(t)] = tr;
+        std::string lbl = lm.get(kTabs[static_cast<std::size_t>(t)]);
+        if (t == 1 && (member->getTalentPoints() > 0 || member->canChooseSpecialization())) lbl += " (!)";
+        UiSystem::drawButton(window, assets, font, {
+            tr, lbl, "", static_cast<int>(m_rightTab) == t, tr.contains(mouse), true, static_cast<int>(m_rightTab) == t
+        });
+    }
+
+    m_invRowRects.clear();
+    std::string tipTitle;
+    std::vector<std::string> tipLines;
+    sf::Color tipColor = UiTheme::textGold();
+
+    if (m_rightTab == RightTab::INVENTORY) {
+        const auto& inv = party.getInventory();
+        if (inv.empty()) {
+            UiSystem::drawText(window, font, lm.get("CHAR_INFO_BAG_EMPTY"), {rightP.left + 20.0f, rightP.top + 74.0f}, 14, UiTheme::textMuted());
+        } else {
+            const int maxRows = 12;
+            const int start = std::max(0, m_selectedInvIdx - maxRows + 1);
+            for (int i = start; i < std::min(static_cast<int>(inv.size()), start + maxRows); ++i) {
+                const auto& item = inv[static_cast<std::size_t>(i)];
+                const sf::FloatRect r(rightP.left + 14.0f, rightP.top + 60.0f + static_cast<float>(i - start) * 41.0f,
+                                      rightP.width - 28.0f, 36.0f);
+                const bool hov = r.contains(mouse);
+                sf::RectangleShape bg({r.width, r.height});
+                bg.setPosition(r.left, r.top);
+                bg.setFillColor((hov || m_selectedInvIdx == i) ? UiTheme::panelHover() : UiTheme::panelAlt());
+                bg.setOutlineThickness(1.0f);
+                bg.setOutlineColor(hov ? UiTheme::borderGold() : UiTheme::borderBronze());
+                window.draw(bg);
+
+                std::string disp = item->getName();
+                if (auto eq = std::dynamic_pointer_cast<Equipment>(item)) disp = eq->getDisplayName();
+                UiSystem::drawText(window, font, disp, {r.left + 10.0f, r.top + 8.0f}, 14,
+                                   UiTheme::rarityColor(item->getRarity()), true, 320.0f);
+                UiSystem::drawText(window, font, item->isEquipment() ? lm.get("CHAR_INFO_EQUIP") : lm.get("CHAR_INFO_USE"),
+                                   {r.left + r.width - 84.0f, r.top + 9.0f}, 12, UiTheme::textGold());
+
+                while (static_cast<int>(m_invRowRects.size()) <= i) m_invRowRects.emplace_back();
+                m_invRowRects[static_cast<std::size_t>(i)] = r;
+
+                if (hov) {
+                    tipTitle = disp;
+                    tipColor = UiTheme::rarityColor(item->getRarity());
+                    tipLines = {item->getDescription()};
+                    if (auto eq = std::dynamic_pointer_cast<Equipment>(item)) {
+                        const auto cur = member->getEquippedItem(eq->getSlot());
+                        const int curAc = cur ? cur->getAcBonus() : 0;
+                        const int acDiff = eq->getAcBonus() - curAc;
+                        if (eq->getSlot() == EquipSlot::WEAPON) {
+                            tipLines.push_back("DMG: " + std::to_string(eq->getDamageDiceCount()) + "d" +
+                                               std::to_string(eq->getDamageDiceSides()) + " +" +
+                                               std::to_string(eq->getUpgradeDamageBonus()));
                         } else {
-                            useSelectedConsumable();
+                            tipLines.push_back("AC: " + std::to_string(eq->getAcBonus()) + " (" +
+                                               (acDiff >= 0 ? "+" : "") + std::to_string(acDiff) + ")");
                         }
                     }
                 }
-                break;
-
-            default:
-                break;
-        }
-    }
-}
-
-void CharacterInfoState::update(sf::Time /*deltaTime*/) {
-    // 인벤토리 상태는 실시간 물리/논리 애니메이션 업데이트 없음
-}
-
-void CharacterInfoState::draw(sf::RenderWindow& window) {
-    sf::Color neonGreen = sf::Color(51, 255, 51);
-    sf::Color brightGreen = sf::Color(102, 255, 102);
-    sf::Color amber = sf::Color(255, 176, 0);
-    sf::Color red = sf::Color(255, 51, 51);
-    sf::Color mutedColor = sf::Color(110, 155, 110);
-
-    if (LocalizationManager::getInstance().getTextScale() > 125) {
-        drawLargeTextLayout(window);
-        return;
-    }
-
-    // 1. 전체 화면 상단 타이틀
-    drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_TITLE"), 512.0f, 30.0f, 20, brightGreen, true);
-
-    auto& party = m_game.getParty();
-    auto members = party.getMembers();
-    int memberCount = party.getMemberCount();
-
-    // 2. 상단 파티원 요약 표시
-    std::string summaryStr = "";
-    for (int i = 0; i < memberCount; ++i) {
-        std::string mark = (i == m_selectedCharIndex) ? " [*]" : "    ";
-        summaryStr += std::to_string(i + 1) + "." + members[i]->getName() + mark + "  ";
-    }
-    drawText(window, summaryStr, 512.0f, 65.0f, 12, brightGreen, true);
-
-    // 3. 좌측 캐릭터 상세 프레임 (x: 40, y: 100, w: 450, h: 520)
-    sf::Color leftFrameColor = (m_focusArea == 0) ? neonGreen : mutedColor;
-    drawBox(window, 40.0f, 100.0f, 450.0f, 520.0f, leftFrameColor, 2.0f);
-    drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_MEMBER_DETAILS"), 265.0f, 115.0f, 14, leftFrameColor, true);
-
-    if (m_selectedCharIndex < memberCount) {
-        auto caster = members[m_selectedCharIndex];
-        
-        // 기본 인적 정보
-        drawText(window, LocalizationManager::getInstance().format("CHAR_INFO_NAME_LINE", {
-            {"name", caster->getName()}}), 60.0f, 150.0f, 12, brightGreen);
-
-        drawText(window, LocalizationManager::getInstance().format("CHAR_INFO_IDENTITY_LINE", {
-            {"age", ageLabel(*caster, LocalizationManager::getInstance())},
-            {"gender", genderLabel(caster->getGender(), LocalizationManager::getInstance())}}),
-            60.0f, 175.0f, 12, brightGreen);
-        
-        // 클래스 정보 다국어 치환
-        std::string classStr = "";
-        switch (caster->getClass()) {
-            case CharacterClass::WARRIOR: classStr = LocalizationManager::getInstance().get("CLASS_WARRIOR"); break;
-            case CharacterClass::MAGE:    classStr = LocalizationManager::getInstance().get("CLASS_MAGE"); break;
-            case CharacterClass::ROGUE:   classStr = LocalizationManager::getInstance().get("CLASS_ROGUE"); break;
-            case CharacterClass::CLERIC:  classStr = LocalizationManager::getInstance().get("CLASS_CLERIC"); break;
-        }
-        drawText(window, LocalizationManager::getInstance().format("CHAR_INFO_CLASS_LINE", {
-            {"class", classStr}, {"level", std::to_string(caster->getLevel())}}),
-            60.0f, 200.0f, 12, brightGreen);
-        drawText(window, LocalizationManager::getInstance().get("CREATE_TRAIT") + ": " +
-                 LocalizationManager::getInstance().get(traitKey(caster->getClass())),
-                 60.0f, 225.0f, 11, amber);
-        
-        std::string hpStr = LocalizationManager::getInstance().get("CHAR_INFO_HP") + ": " + std::to_string(caster->getHp()) + " / " + std::to_string(caster->getMaxHp());
-        sf::Color hpColor = caster->isDead() ? red : (caster->getHp() < caster->getMaxHp() / 3 ? amber : brightGreen);
-        drawText(window, hpStr, 60.0f, 250.0f, 12, hpColor);
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_XP") + ": " + std::to_string(caster->getXp()) + " / " + ((caster->getLevel() == 1) ? "300" : "900"), 60.0f, 275.0f, 12, brightGreen);
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_AC") + ": " + std::to_string(caster->getAc()), 60.0f, 300.0f, 12, brightGreen);
-        drawText(window, statusSummary(*caster), 60.0f, 320.0f, 12,
-                 caster->isDead() ? red : amber);
-
-        if (caster->getClass() == CharacterClass::MAGE || caster->getClass() == CharacterClass::CLERIC) {
-            drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_SPELLS") + ": " + std::to_string(caster->getSpellSlots()) + " / " + std::to_string(caster->getMaxSpellSlots()), 250.0f, 300.0f, 12, brightGreen);
-        }
-
-        // D&D 6대 능력치 및 보정치 출력
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_ABILITIES"), 60.0f, 340.0f, 12, leftFrameColor);
-        const auto& ab = caster->getAbilities();
-        auto getModStr = [&](int score) {
-            int mod = ab.getModifier(score);
-            return (mod >= 0 ? "+" : "") + std::to_string(mod);
-        };
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_STR") + ": " + std::to_string(ab.strength) + " (" + getModStr(ab.strength) + ")", 60.0f, 365.0f, 12, brightGreen);
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_DEX") + ": " + std::to_string(ab.dexterity) + " (" + getModStr(ab.dexterity) + ")", 60.0f, 390.0f, 12, brightGreen);
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_CON") + ": " + std::to_string(ab.constitution) + " (" + getModStr(ab.constitution) + ")", 60.0f, 415.0f, 12, brightGreen);
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_INT") + ": " + std::to_string(ab.intelligence) + " (" + getModStr(ab.intelligence) + ")", 250.0f, 365.0f, 12, brightGreen);
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_WIS") + ": " + std::to_string(ab.wisdom) + " (" + getModStr(ab.wisdom) + ")", 250.0f, 390.0f, 12, brightGreen);
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_CHA") + ": " + std::to_string(ab.charisma) + " (" + getModStr(ab.charisma) + ")", 250.0f, 415.0f, 12, brightGreen);
-
-        // 장착 장비 슬롯 정보
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_EQUIP_SLOTS_GUIDE"), 60.0f, 450.0f, 12, leftFrameColor);
-
-        auto drawSlot = [&](const std::string& label, EquipSlot slot, float yPos, int idx) {
-            auto item = caster->getEquippedItem(slot);
-            std::string itemName = item ? item->getName() : LocalizationManager::getInstance().get("CHAR_INFO_NONE");
-            std::string cursor = (m_focusArea == 0 && m_equipmentSlotIndex == idx) ? "> " : "  ";
-            sf::Color slotColor = (m_focusArea == 0 && m_equipmentSlotIndex == idx) ? brightGreen : (item ? brightGreen : mutedColor);
-            drawText(window, cursor + label + ": " + itemName, 60.0f, yPos, 12, slotColor);
-        };
-
-        drawSlot(LocalizationManager::getInstance().get("SLOT_WEAPON"), EquipSlot::WEAPON, 475.0f, 0);
-        drawSlot(LocalizationManager::getInstance().get("SLOT_ARMOR"), EquipSlot::ARMOR, 500.0f, 1);
-        drawSlot(LocalizationManager::getInstance().get("SLOT_SHIELD"), EquipSlot::SHIELD, 525.0f, 2);
-    } else {
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_NO_MEMBERS"), 265.0f, 300.0f, 12, brightGreen, true);
-    }
-
-    // 4. 우측 공용 인벤토리 프레임 (x: 534, y: 100, w: 450, h: 520)
-    sf::Color rightFrameColor = (m_focusArea == 1) ? neonGreen : mutedColor;
-    drawBox(window, 534.0f, 100.0f, 450.0f, 520.0f, rightFrameColor, 2.0f);
-    drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_PARTY_INVENTORY"), 759.0f, 115.0f, 14, rightFrameColor, true);
-
-    drawText(window, LocalizationManager::getInstance().get("TOWN_GOLD") + ": " + std::to_string(party.getGold()) + " G", 554.0f, 150.0f, 12, amber);
-
-    const auto& inv = party.getInventory();
-    const int invSize = static_cast<int>(inv.size());
-
-    float itemStartY = 180.0f;
-    float itemSpacing = 22.0f;
-    int maxDisplayItems = 10;
-    int scrollOffset = 0;
-    if (m_inventoryIndex >= maxDisplayItems) {
-        scrollOffset = m_inventoryIndex - maxDisplayItems + 1;
-    }
-
-    if (invSize > 0) {
-        for (int i = 0; i < maxDisplayItems; ++i) {
-            int targetIdx = i + scrollOffset;
-            if (targetIdx >= invSize) break;
-
-            auto item = inv[targetIdx];
-            std::string cursor = (m_focusArea == 1 && m_inventoryIndex == targetIdx) ? "> " : "  ";
-            sf::Color itemColor = (m_focusArea == 1 && m_inventoryIndex == targetIdx) ? brightGreen : brightGreen;
-
-            std::string itemLabel = cursor + item->getName();
-            if (item->isEquipment()) {
-                itemLabel += " (" + LocalizationManager::getInstance().get("CHAR_INFO_TYPE_EQUIP") + ")";
             }
-            drawText(window, itemLabel, 554.0f, itemStartY + i * itemSpacing, 12, itemColor);
         }
+    } else if (m_rightTab == RightTab::TALENTS) {
+        UiSystem::drawText(window, font,
+                           lm.format("TALENT_POINTS_LABEL", {{"points", std::to_string(member->getTalentPoints())}}),
+                           {rightP.left + 18.0f, rightP.top + 62.0f}, 16, UiTheme::textGold());
 
-        // 가방 내 선택된 아이템의 설명 상자
-        drawBox(window, 554.0f, 430.0f, 410.0f, 80.0f, rightFrameColor, 1.0f);
-        if (m_inventoryIndex < invSize) {
-            auto selItem = inv[m_inventoryIndex];
-            drawText(window, "[ " + selItem->getName() + " ]", 564.0f, 440.0f, 11, amber);
-            drawText(window, selItem->getDescription(), 564.0f, 465.0f, 11, brightGreen);
-            std::string typeVal = selItem->isEquipment() ? LocalizationManager::getInstance().get("CHAR_INFO_TYPE_EQUIP") : LocalizationManager::getInstance().get("CHAR_INFO_TYPE_POTION");
-            drawText(window, typeVal + " | " + LocalizationManager::getInstance().get("CHAR_INFO_PRICE") + ": " + std::to_string(selItem->getGoldValue()) + " G", 564.0f, 490.0f, 10, mutedColor);
-        }
-    } else {
-        drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_EMPTY_BAG"), 759.0f, 300.0f, 12, mutedColor, true);
-    }
-
-    // 5. 상태 알림 메시지 출력
-    drawText(window, m_statusMsg, 50.0f, 635.0f, 12, amber);
-
-    // 6. 하단 가이드바 드로우
-    drawBox(window, 40.0f, 665.0f, 944.0f, 50.0f, neonGreen, 1.5f);
-    drawText(window, LocalizationManager::getInstance().get("CHAR_INFO_GUIDE_BAR"), 512.0f, 690.0f, 12, brightGreen, true);
-}
-
-void CharacterInfoState::drawLargeTextLayout(sf::RenderWindow& window) {
-    auto& localization = LocalizationManager::getInstance();
-    auto& party = m_game.getParty();
-    const auto members = party.getMembers();
-    const sf::Color neonGreen(51, 255, 51);
-    const sf::Color brightGreen(102, 255, 102);
-    const sf::Color amber(255, 176, 0);
-    const sf::Color muted(170, 210, 170);
-
-    drawText(window, localization.get("CHAR_INFO_TITLE"), 512.0f, 22.0f, 20, brightGreen, true);
-    std::string summary;
-    for (int index = 0; index < party.getMemberCount(); ++index) {
-        summary += std::to_string(index + 1) + "." + members[index]->getName();
-        if (index == m_selectedCharIndex) summary += "[*]";
-        summary += "  ";
-    }
-    drawText(window, summary, 512.0f, 70.0f, 14, brightGreen, true);
-    drawBox(window, 40.0f, 110.0f, 944.0f, 535.0f, neonGreen, 2.0f);
-
-    if (m_focusArea == 0) {
-        drawText(window, localization.get("CHAR_INFO_MEMBER_DETAILS"), 512.0f, 125.0f, 14, neonGreen, true);
-        if (m_selectedCharIndex < party.getMemberCount()) {
-            const auto character = members[m_selectedCharIndex];
-            std::string className;
-            switch (character->getClass()) {
-                case CharacterClass::WARRIOR: className = localization.get("CLASS_WARRIOR"); break;
-                case CharacterClass::MAGE: className = localization.get("CLASS_MAGE"); break;
-                case CharacterClass::ROGUE: className = localization.get("CLASS_ROGUE"); break;
-                case CharacterClass::CLERIC: className = localization.get("CLASS_CLERIC"); break;
-            }
-            float y = 170.0f;
-            const float step = 32.0f;
-            auto line = [&](const std::string& text, sf::Color color) {
-                drawText(window, text, 70.0f, y, 14, color);
-                y += step;
+        // 전직 선택 영역 (Lv 3+)
+        if (member->canChooseSpecialization()) {
+            UiSystem::drawText(window, font, lm.get("SPEC_CHOOSE_PROMPT"), {rightP.left + 18.0f, rightP.top + 94.0f},
+                               14, UiTheme::statPos());
+            const auto [sa, sb] = member->getAvailableSpecializations();
+            auto specKey = [](Specialization s) -> const char* {
+                switch (s) {
+                    case Specialization::VANGUARD:     return "SPEC_VANGUARD";
+                    case Specialization::BERSERKER:    return "SPEC_BERSERKER";
+                    case Specialization::PYROMANCER:   return "SPEC_PYROMANCER";
+                    case Specialization::CHRONOMANCER: return "SPEC_CHRONOMANCER";
+                    case Specialization::ASSASSIN:     return "SPEC_ASSASSIN";
+                    case Specialization::TRAPSMITH:    return "SPEC_TRAPSMITH";
+                    case Specialization::PALADIN:      return "SPEC_PALADIN";
+                    case Specialization::ORACLE:       return "SPEC_ORACLE";
+                    default: return "SPEC_NONE";
+                }
             };
-            line(localization.format("CHAR_INFO_NAME_LINE", {{"name", character->getName()}}), brightGreen);
-            line(localization.format("CHAR_INFO_IDENTITY_LINE", {
-                {"age", ageLabel(*character, localization)},
-                {"gender", genderLabel(character->getGender(), localization)}}), brightGreen);
-            line(localization.format("CHAR_INFO_CLASS_LINE", {
-                {"class", className}, {"level", std::to_string(character->getLevel())}}), brightGreen);
-            line(localization.get("CREATE_TRAIT") + ": " +
-                 localization.get(traitKey(character->getClass())), amber);
-            line(localization.get("CHAR_INFO_HP") + ": " + std::to_string(character->getHp()) +
-                 "/" + std::to_string(character->getMaxHp()), brightGreen);
-            line(localization.get("CHAR_INFO_XP") + ": " + std::to_string(character->getXp()) +
-                 "/" + (character->getLevel() == 1 ? "300" : "900"), brightGreen);
-            line(localization.get("CHAR_INFO_AC") + ": " + std::to_string(character->getAc()), brightGreen);
-            line(statusSummary(*character), character->isDead() ? sf::Color(255, 51, 51) : amber);
-            const auto abilities = character->getAbilities();
-            line("STR " + std::to_string(abilities.strength) + " | DEX " +
-                 std::to_string(abilities.dexterity) + " | CON " + std::to_string(abilities.constitution), muted);
-            line("INT " + std::to_string(abilities.intelligence) + " | WIS " +
-                 std::to_string(abilities.wisdom) + " | CHA " + std::to_string(abilities.charisma), muted);
-            auto equipmentLine = [&](const std::string& label, EquipSlot slot, int index) {
-                const auto item = character->getEquippedItem(slot);
-                const std::string itemName = item ? item->getName() : localization.get("CHAR_INFO_NONE");
-                const std::string cursor = m_equipmentSlotIndex == index ? "> " : "  ";
-                line(cursor + label + ": " + itemName, brightGreen);
-            };
-            equipmentLine(localization.get("SLOT_WEAPON"), EquipSlot::WEAPON, 0);
-            equipmentLine(localization.get("SLOT_ARMOR"), EquipSlot::ARMOR, 1);
-            equipmentLine(localization.get("SLOT_SHIELD"), EquipSlot::SHIELD, 2);
+            m_specRects[0] = {rightP.left + 16.0f, rightP.top + 120.0f, 218.0f, 48.0f};
+            m_specRects[1] = {rightP.left + 244.0f, rightP.top + 120.0f, 218.0f, 48.0f};
+            UiSystem::drawButton(window, assets, font, {m_specRects[0], lm.get(specKey(sa)), "", false, m_specRects[0].contains(mouse), true, true});
+            UiSystem::drawButton(window, assets, font, {m_specRects[1], lm.get(specKey(sb)), "", false, m_specRects[1].contains(mouse), true, true});
         } else {
-            drawText(window, localization.get("CHAR_INFO_NO_MEMBERS"), 512.0f, 300.0f, 14, brightGreen, true);
+            UiSystem::drawText(window, font,
+                               lm.get("SPEC_LABEL") + ": " + member->getSpecializationName() +
+                                   (member->getLevel() < Character::SPEC_UNLOCK_LEVEL ? " (Lv.3+)" : ""),
+                               {rightP.left + 18.0f, rightP.top + 104.0f}, 14, UiTheme::cyanAccent());
+        }
+
+        static constexpr std::array<const char*, 4> kTalName = {"TALENT_VITALITY", "TALENT_MASTERY", "TALENT_TACTICS", "TALENT_APEX"};
+        static constexpr std::array<const char*, 4> kTalDesc = {"TALENT_VITALITY_DESC", "TALENT_MASTERY_DESC", "TALENT_TACTICS_DESC", "TALENT_APEX_DESC"};
+        for (int n = 0; n < 4; ++n) {
+            const sf::FloatRect r(rightP.left + 16.0f, rightP.top + 190.0f + static_cast<float>(n) * 90.0f,
+                                  rightP.width - 32.0f, 78.0f);
+            m_talentRects[static_cast<std::size_t>(n)] = r;
+            const int rank = member->getTalentRank(static_cast<TalentNode>(n));
+            const bool canUp = member->getTalentPoints() > 0 && rank < Character::MAX_TALENT_RANK;
+            UiSystem::drawPanel(window, assets, r, canUp && r.contains(mouse), 232);
+            UiSystem::drawText(window, font,
+                               lm.get(kTalName[static_cast<std::size_t>(n)]) + "  [" +
+                                   std::to_string(rank) + "/" + std::to_string(Character::MAX_TALENT_RANK) + "]",
+                               {r.left + 14.0f, r.top + 12.0f}, 15,
+                               canUp ? UiTheme::textGold() : UiTheme::textPrimary());
+            UiSystem::drawText(window, font, lm.get(kTalDesc[static_cast<std::size_t>(n)]),
+                               {r.left + 14.0f, r.top + 40.0f}, 12, UiTheme::textMuted(), false, r.width - 28.0f);
         }
     } else {
-        drawText(window, localization.get("CHAR_INFO_PARTY_INVENTORY"), 512.0f, 125.0f, 14, neonGreen, true);
-        drawText(window, localization.get("TOWN_GOLD") + ": " + std::to_string(party.getGold()) + " G",
-                 70.0f, 170.0f, 14, amber);
-        const auto& inventory = party.getInventory();
-        const int maxItems = 8;
-        const int scroll = m_inventoryIndex >= maxItems ? m_inventoryIndex - maxItems + 1 : 0;
-        for (int row = 0; row < maxItems; ++row) {
-            const int index = scroll + row;
-            if (index >= static_cast<int>(inventory.size())) break;
-            const std::string cursor = index == m_inventoryIndex ? "> " : "  ";
-            drawText(window, cursor + inventory[static_cast<std::size_t>(index)]->getName(),
-                     70.0f, 215.0f + row * 43.0f, 14, brightGreen);
-        }
-        if (!inventory.empty() && m_inventoryIndex < static_cast<int>(inventory.size())) {
-            const auto item = inventory[static_cast<std::size_t>(m_inventoryIndex)];
-            drawText(window, item->getName() + " | " + localization.get("CHAR_INFO_PRICE") + ": " +
-                     std::to_string(item->getGoldValue()) + " G", 70.0f, 585.0f, 14, amber);
+        const auto& skills = member->getSkills();
+        for (std::size_t i = 0; i < skills.size(); ++i) {
+            const auto& sk = skills[i];
+            const sf::FloatRect r(rightP.left + 16.0f, rightP.top + 62.0f + static_cast<float>(i) * 78.0f,
+                                  rightP.width - 32.0f, 68.0f);
+            UiSystem::drawPanel(window, assets, r, false, 226);
+            UiSystem::drawText(window, font, sk->getName() + (sk->isSpell() ? " [SP]" : ""),
+                               {r.left + 14.0f, r.top + 10.0f}, 15, UiTheme::textGold(), true, 320.0f);
+            UiSystem::drawBadge(window, font, {r.left + r.width - 62.0f, r.top + 10.0f},
+                                UiTheme::elementShortCode(sk->getDamageType()),
+                                sf::Color(22, 24, 34), UiTheme::elementColor(sk->getDamageType()), 10);
+            UiSystem::drawText(window, font, sk->getDescription(),
+                               {r.left + 14.0f, r.top + 36.0f}, 12, UiTheme::textMuted(), false, r.width - 28.0f);
         }
     }
 
-    if (!m_statusMsg.empty()) drawText(window, m_statusMsg, 50.0f, 650.0f, 14, amber);
-    drawBox(window, 40.0f, 690.0f, 944.0f, 55.0f, neonGreen, 1.5f);
-    drawText(window, localization.get("CHAR_INFO_GUIDE_LARGE"), 512.0f, 710.0f, 14, brightGreen, true);
-}
-
-std::string CharacterInfoState::statusSummary(const Character& character) const {
-    auto& localization = LocalizationManager::getInstance();
-    std::vector<std::string> states;
-    if (character.isDead()) states.push_back(localization.get("STATUS_DEAD"));
-    if (character.getPoisonTurns() > 0) {
-        states.push_back(localization.get("STATUS_POISON") + ":" + std::to_string(character.getPoisonTurns()));
+    if (!tipTitle.empty()) {
+        UiSystem::drawTooltip(window, assets, font, mouse, tipTitle, tipLines, tipColor);
     }
-    if (character.getParalysisTurns() > 0) {
-        states.push_back(localization.get("STATUS_PARALYSIS") + ":" + std::to_string(character.getParalysisTurns()));
-    }
-    if (character.getStrBuffTurns() > 0) {
-        states.push_back(localization.get("STATUS_STRENGTH") + ":+" +
-                         std::to_string(character.getStrBuffAmount()) + "/" +
-                         std::to_string(character.getStrBuffTurns()));
-    }
-    if (character.getDexBuffTurns() > 0) {
-        states.push_back(localization.get("STATUS_DEXTERITY") + ":+" +
-                         std::to_string(character.getDexBuffAmount()) + "/" +
-                         std::to_string(character.getDexBuffTurns()));
-    }
-    if (character.getBlessTurns() > 0) {
-        states.push_back(localization.get("STATUS_BLESS") + ":" + std::to_string(character.getBlessTurns()));
-    }
-    std::string summary = states.empty() ? localization.get("CHAR_INFO_HEALTHY") : states.front();
-    for (std::size_t index = 1; index < states.size(); ++index) summary += ", " + states[index];
-    return localization.get("CHAR_INFO_CONDITIONS") + ": " + summary;
-}
-
-void CharacterInfoState::useSelectedConsumable() {
-    auto& party = m_game.getParty();
-    const auto& inv = party.getInventory();
-    if (m_inventoryIndex >= static_cast<int>(inv.size())) return;
-
-    auto item = inv[m_inventoryIndex];
-    if (item->isEquipment()) return;
-
-    auto members = party.getMembers();
-    if (m_selectedCharIndex >= static_cast<int>(members.size())) return;
-    auto caster = members[m_selectedCharIndex];
-
-    if (caster->isDead()) {
-        m_statusMsg = LocalizationManager::getInstance().format("CHAR_MSG_DEAD_CANNOT_USE", {{"name", caster->getName()}});
-        return;
-    }
-
-    std::string itemId = item->getId();
-
-    // 1. 비전투 버프 물약 사용 차단
-    if (itemId == "pot_strength" || itemId == "pot_dexterity") {
-        m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_COMBAT_ONLY_ITEM");
-        return;
-    }
-
-    // 2. 마나 물약 캐스터 전용 및 슬롯 상태 확인
-    if (itemId == "pot_mana") {
-        if (caster->getClass() != CharacterClass::MAGE && caster->getClass() != CharacterClass::CLERIC) {
-            m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_INVALID_MANA_CLASS");
-            return;
-        }
-        if (caster->getSpellSlots() >= caster->getMaxSpellSlots()) {
-            m_statusMsg = LocalizationManager::getInstance().format("ITEM_LOG_SLOT_FULL", {{"target", caster->getName()}});
-            return;
-        }
-    }
-
-    // 3. 해독 스크롤 독 상태 확인
-    if (itemId == "scr_cure") {
-        if (caster->getPoisonTurns() <= 0) {
-            m_statusMsg = LocalizationManager::getInstance().format("ITEM_LOG_NOT_POISONED", {{"target", caster->getName()}});
-            return;
-        }
-    }
-
-    // 다형성 기반 효과 적용
-    auto consumable = std::dynamic_pointer_cast<ConsumableItem>(item);
-    if (!consumable) return;
-    if (!CombatActionRules::canUseConsumable(*consumable, *caster)) {
-        m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_ITEM_NO_EFFECT");
-        return;
-    }
-    const PartyCheckpoint checkpoint = party.captureCheckpoint();
-
-    std::vector<std::string> useLogs;
-    std::vector<std::shared_ptr<Character>> partyList;
-    for (int i = 0; i < party.getMemberCount(); ++i) {
-        partyList.push_back(party.getMember(i));
-    }
-
-    consumable->applyEffect(*caster, partyList, useLogs);
-
-    // 아이템 제거
-    party.removeItem(m_inventoryIndex);
-
-    if (m_persistChanges) {
-        const auto saveResult = party.saveToFile();
-        if (!saveResult.durabilityConfirmed()) {
-            m_statusMsg = LocalizationManager::getInstance().get("TOWN_MSG_DURABILITY_UNKNOWN");
-            return;
-        }
-        if (!saveResult) {
-            party.restoreCheckpoint(checkpoint);
-            m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_ITEM_ROLLBACK");
-            return;
-        }
-    }
-
-    if (!useLogs.empty()) {
-        m_statusMsg = useLogs[0];
-    } else {
-        m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_ITEM_USED");
-    }
-
-    // 인벤토리 범위 보정
-    if (m_inventoryIndex >= static_cast<int>(party.getInventory().size()) && m_inventoryIndex > 0) {
-        m_inventoryIndex--;
-    }
-}
-
-void CharacterInfoState::equipSelectedItem() {
-    auto& party = m_game.getParty();
-    const PartyCheckpoint checkpoint = party.captureCheckpoint();
-    const auto& inv = party.getInventory();
-    if (m_inventoryIndex >= static_cast<int>(inv.size())) return;
-
-    auto item = inv[m_inventoryIndex];
-    if (!item->isEquipment()) return;
-
-    auto members = party.getMembers();
-    if (m_selectedCharIndex >= static_cast<int>(members.size())) return;
-    auto caster = members[m_selectedCharIndex];
-
-    auto equip = std::dynamic_pointer_cast<Equipment>(item);
-    if (!equip) return;
-
-    // 캐릭터 클래스에 따른 D&D 아이템 장착 제한 룰 적용 (v0.8.0)
-    std::string itemId = equip->getId();
-    if (caster->getClass() == CharacterClass::MAGE) {
-        // 마법사: 대거, 스태프, 로브만 착용 가능
-        if (itemId != "wpn_dagger" && itemId != "wpn_staff" && itemId != "arm_robe") {
-            m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_MAGE_EQUIP_LIMIT");
-            return;
-        }
-    } else if (caster->getClass() == CharacterClass::ROGUE) {
-        // 도적: 대거, 레이피어, 가죽 갑옷만 착용 가능 (방패 및 중장비 불가)
-        if (itemId != "wpn_dagger" && itemId != "wpn_rapier" && itemId != "arm_leather") {
-            m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_ROGUE_EQUIP_LIMIT");
-            return;
-        }
-    } else if (caster->getClass() == CharacterClass::CLERIC) {
-        // 성직자: 대검(그레이트소드), 마법지팡이, 판금갑옷, 타워실드, 레이피어 불가
-        if (itemId == "wpn_greatsword" || itemId == "wpn_staff" || itemId == "wpn_rapier" || 
-            itemId == "arm_plate" || itemId == "shd_tower") {
-            m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_CLERIC_EQUIP_LIMIT");
-            return;
-        }
-    } else if (caster->getClass() == CharacterClass::WARRIOR) {
-        // 전사: 마법지팡이, 마법로브 불가
-        if (itemId == "wpn_staff" || itemId == "arm_robe") {
-            m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_WARRIOR_EQUIP_LIMIT");
-            return;
-        }
-    }
-
-    EquipSlot slot = equip->getSlot();
-    auto prevEquip = caster->getEquippedItem(slot);
-
-    // [v0.8.0] 양손 무기(그레이트소드) 장착 시 방패 탈거 자동화 및 역 연산
-    std::shared_ptr<Equipment> autoUnequippedItem = nullptr;
-    if (slot == EquipSlot::WEAPON && itemId == "wpn_greatsword") {
-        if (caster->getEquippedItem(EquipSlot::SHIELD)) {
-            autoUnequippedItem = caster->getEquippedItem(EquipSlot::SHIELD);
-            caster->unequip(EquipSlot::SHIELD);
-            m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_SHIELD_AUTO_UNEQUIP");
-        }
-    } else if (slot == EquipSlot::SHIELD) {
-        auto curWpn = caster->getEquippedItem(EquipSlot::WEAPON);
-        if (curWpn && curWpn->getId() == "wpn_greatsword") {
-            autoUnequippedItem = curWpn;
-            caster->unequip(EquipSlot::WEAPON);
-            m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_WEAPON_AUTO_UNEQUIP");
-        }
-    }
-
-    // 장비 장착 처리
-    if (caster->equip(equip)) {
-        // 기존 장비가 있었다면 해제하여 가방에 반환
-        party.removeItem(m_inventoryIndex);
-        if (prevEquip) {
-            party.addItem(prevEquip);
-        }
-        // 양손 무기로 인해 자동 탈거된 장비도 가방에 안전 적재 반환
-        if (autoUnequippedItem) {
-            party.addItem(autoUnequippedItem);
-        }
-
-        if (m_persistChanges) {
-            const auto saveResult = party.saveToFile();
-            if (!saveResult.durabilityConfirmed()) {
-                m_statusMsg = LocalizationManager::getInstance().get("TOWN_MSG_DURABILITY_UNKNOWN");
-                return;
-            }
-            if (!saveResult) {
-                party.restoreCheckpoint(checkpoint);
-                m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_EQUIP_ROLLBACK");
-                return;
-            }
-        }
-        
-        m_statusMsg = LocalizationManager::getInstance().format("CHAR_MSG_EQUIPPED", {
-            {"name", caster->getName()}, {"item", equip->getName()}});
-        
-        // 인벤토리 인덱스 보정
-        if (m_inventoryIndex >= static_cast<int>(party.getInventory().size()) && m_inventoryIndex > 0) {
-            m_inventoryIndex--;
-        }
-    } else {
-        if (autoUnequippedItem) {
-            static_cast<void>(caster->equip(autoUnequippedItem));
-        }
-        m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_EQUIP_FAILED");
-    }
-}
-
-void CharacterInfoState::unequipSelectedSlot() {
-    auto& party = m_game.getParty();
-    const PartyCheckpoint checkpoint = party.captureCheckpoint();
-    auto members = party.getMembers();
-    if (m_selectedCharIndex >= static_cast<int>(members.size())) return;
-    auto caster = members[m_selectedCharIndex];
-
-    EquipSlot slot = EquipSlot::WEAPON;
-    std::string slotName = LocalizationManager::getInstance().get("SLOT_WEAPON");
-    if (m_equipmentSlotIndex == 1) {
-        slot = EquipSlot::ARMOR;
-        slotName = LocalizationManager::getInstance().get("SLOT_ARMOR");
-    } else if (m_equipmentSlotIndex == 2) {
-        slot = EquipSlot::SHIELD;
-        slotName = LocalizationManager::getInstance().get("SLOT_SHIELD");
-    }
-
-    auto equipped = caster->getEquippedItem(slot);
-    if (!equipped) {
-        m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_SLOT_EMPTY");
-        return;
-    }
-
-    // 장비 장착 해제 후 가방 반환
-    caster->unequip(slot);
-    party.addItem(equipped);
-
-    if (m_persistChanges) {
-        const auto saveResult = party.saveToFile();
-        if (!saveResult.durabilityConfirmed()) {
-            m_statusMsg = LocalizationManager::getInstance().get("TOWN_MSG_DURABILITY_UNKNOWN");
-            return;
-        }
-        if (!saveResult) {
-            party.restoreCheckpoint(checkpoint);
-            m_statusMsg = LocalizationManager::getInstance().get("CHAR_MSG_UNEQUIP_ROLLBACK");
-            return;
-        }
-    }
-
-    m_statusMsg = LocalizationManager::getInstance().format("CHAR_MSG_UNEQUIPPED", {
-        {"name", caster->getName()}, {"slot", slotName}, {"item", equipped->getName()}});
-}
-
-void CharacterInfoState::drawBox(sf::RenderWindow& window, float x, float y, float w, float h, sf::Color color, float thickness) {
-    sf::RectangleShape box(sf::Vector2f(w, h));
-    box.setPosition(x, y);
-    box.setFillColor(sf::Color::Transparent);
-    box.setOutlineColor(color);
-    box.setOutlineThickness(thickness);
-    window.draw(box);
-}
-
-void CharacterInfoState::drawText(sf::RenderWindow& window, const std::string& str, float x, float y, int size, sf::Color color, bool center) {
-    sf::Text text;
-    text.setFont(m_game.getFont());
-
-    // C++ std::string의 메모리 안정적 수명을 보장하기 위해 로컬 변수에 명시 보존 후 이터레이터로 UTF-8 로드
-    std::string safeStr = str;
-    text.setString(sf::String::fromUtf8(safeStr.begin(), safeStr.end()));
-
-    text.setCharacterSize(LocalizationManager::getInstance().getScaledTextSize(
-        static_cast<unsigned int>(std::max(1, size))));
-    text.setFillColor(color);
-
-    if (center) {
-        sf::FloatRect bounds = text.getLocalBounds();
-        text.setOrigin(bounds.left + bounds.width / 2.0f, bounds.top + bounds.height / 2.0f);
-    }
-
-    text.setPosition(x, y);
-    window.draw(text);
 }
 
 } // namespace crawl

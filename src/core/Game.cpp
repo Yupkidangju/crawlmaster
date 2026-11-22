@@ -1,39 +1,126 @@
-// [v0.1.0] Game.cpp 신규 작성
-// SFML 메인 루프 구조를 상세히 구현하고, 폰트 에셋 로드 및 최초 TitleState 상태 주입을 처리한다.
-
 #include "core/Game.hpp"
+#include "core/AudioManager.hpp"
 #include "core/LocalizationManager.hpp"
 #include "core/ResourceLocator.hpp"
 #include "core/SessionRng.hpp"
-#include "controller/TitleState.hpp"
 #include "controller/ShutdownState.hpp"
+#include "controller/TitleState.hpp"
+
+#include <algorithm>
 #include <iostream>
 
 namespace crawl {
 
-Game::Game(bool headless) {
+Game::Game(bool headless) : m_headless(headless) {
     std::cout << "[Session] RNG seed: " << SessionRng::global().seed() << std::endl;
-    if (headless) return;
-    // 1024x768 고정 크기로 윈도우 생성 (크기 조정 금지 옵션 적용)
-    m_window.create(sf::VideoMode(1024, 768), "Crawlmaster", sf::Style::Titlebar | sf::Style::Close);
-    // 프레임 레이트 상한을 60fps로 설정하여 CPU 과열 방지
-    m_window.setFramerateLimit(60);
-
-    // 폰트 자산 로딩 진행
-    loadResources();
-
-    // [v0.9.0] 초기 로컬라이제이션 설정 자동 로딩
     LocalizationManager::getInstance().loadConfig();
+    AudioManager::getInstance().initialize(headless);
+    const auto& lm = LocalizationManager::getInstance();
+    AudioManager::getInstance().applyVolumeConfig(
+        lm.getMasterVolume(), lm.getBgmVolume(), lm.getSfxVolume(), lm.isMuted());
 
-    // 초기 상태인 TitleState를 할당하여 게임 엔진 시작점 지정
+    if (headless) {
+        loadResources();
+        return;
+    }
+
+    createWindowFromConfig();
+    loadResources();
+    m_assets.initializeShaders();
+    triggerFadeIn(0.35f);
     m_stateManager.changeState(std::make_unique<TitleState>(*this));
+}
+
+Game::~Game() {
+    m_assets.clear();
+}
+
+void Game::createWindowFromConfig() {
+    const auto& lm = LocalizationManager::getInstance();
+    const unsigned int w = static_cast<unsigned int>(lm.getWindowWidth());
+    const unsigned int h = static_cast<unsigned int>(lm.getWindowHeight());
+
+    sf::ContextSettings ctx;
+    ctx.depthBits = 24;
+    ctx.antialiasingLevel = lm.getGraphicsQuality() > 0 ? 4 : 0;
+
+    if (lm.isFullscreen()) {
+        const auto desktop = sf::VideoMode::getDesktopMode();
+        m_window.create(desktop, "Crawlmaster", sf::Style::Fullscreen, ctx);
+    } else {
+        m_window.create(sf::VideoMode(w, h), "Crawlmaster", sf::Style::Default, ctx);
+    }
+    m_window.setFramerateLimit(60);
+    m_window.setKeyRepeatEnabled(true);
+    const auto sz = m_window.getSize();
+    m_window.setView(computeLetterboxView(sz.x, sz.y));
+}
+
+void Game::applyDisplaySettings() {
+    if (m_headless) return;
+    createWindowFromConfig();
+    m_assets.clear();
+    m_assets.initializeShaders();
+}
+
+void Game::toggleFullscreen() {
+    auto& lm = LocalizationManager::getInstance();
+    lm.setFullscreen(!lm.isFullscreen());
+    lm.saveConfig();
+    applyDisplaySettings();
+}
+
+sf::View Game::computeLetterboxView(unsigned int width, unsigned int height) const {
+    sf::View view(sf::FloatRect(0.0f, 0.0f, LOGICAL_WIDTH, LOGICAL_HEIGHT));
+    if (width == 0 || height == 0) return view;
+
+    const float windowRatio = static_cast<float>(width) / static_cast<float>(height);
+    const float targetRatio = LOGICAL_WIDTH / LOGICAL_HEIGHT;
+    float sizeX = 1.0f;
+    float sizeY = 1.0f;
+    float posX = 0.0f;
+    float posY = 0.0f;
+
+    if (windowRatio > targetRatio) {
+        sizeX = targetRatio / windowRatio;
+        posX = (1.0f - sizeX) * 0.5f;
+    } else if (windowRatio < targetRatio) {
+        sizeY = windowRatio / targetRatio;
+        posY = (1.0f - sizeY) * 0.5f;
+    }
+    view.setViewport(sf::FloatRect(posX, posY, sizeX, sizeY));
+    return view;
+}
+
+sf::Vector2f Game::mapPixelToLogical(sf::Vector2i pixel) const {
+    if (!m_window.isOpen()) {
+        return {static_cast<float>(pixel.x), static_cast<float>(pixel.y)};
+    }
+    return m_window.mapPixelToCoords(pixel, m_window.getView());
+}
+
+sf::Vector2f Game::getMouseLogicalPosition() const {
+    if (!m_window.isOpen()) return {-1000.0f, -1000.0f};
+    return mapPixelToLogical(sf::Mouse::getPosition(m_window));
+}
+
+void Game::triggerFadeIn(float durationSec) {
+    m_fadeDuration = std::max(0.05f, durationSec);
+    m_fadeAlpha = 1.0f;
+}
+
+void Game::pushToast(const std::string& message, sf::Color accent) {
+    m_toastMessage = message;
+    m_toastAccent = accent;
+    m_toastTimer = 2.8f;
 }
 
 void Game::run() {
     sf::Clock clock;
-    // 윈도우가 열려 있고 상태 매니저에 활성화된 상태가 남아 있는 동안 루프 유지
     while (m_window.isOpen() && !m_stateManager.isEmpty()) {
         sf::Time deltaTime = clock.restart();
+        // 긴 프레임 스파이크(윈도우 드래그 등) 클램핑으로 애니메이션 안정성 확보
+        if (deltaTime.asSeconds() > 0.1f) deltaTime = sf::seconds(0.1f);
 
         processEvents();
         update(deltaTime);
@@ -42,21 +129,26 @@ void Game::run() {
 }
 
 const sf::Font& Game::getFont() const {
-    // [v0.9.2] 현재 설정 언어가 일어/중국어인 경우 다국어 글리프를 완벽 지원하는 CJK 폰트 반환
-    auto lang = LocalizationManager::getInstance().getLanguage();
+    const auto lang = LocalizationManager::getInstance().getLanguage();
     if (lang == Language::JA || lang == Language::ZH_TW || lang == Language::ZH_CN) {
+        return m_cjkFont;
+    }
+    // 고해상도 다크 판타지 UI 가독성을 위해 CJK 폰트가 로드된 경우 선명한 NotoSansCJK를 우선 사용한다.
+    if (!m_cjkFont.getInfo().family.empty()) {
         return m_cjkFont;
     }
     return m_font;
 }
 
-GameStateManager& Game::getStates() {
-    return m_stateManager;
+const sf::Font& Game::getMonoFont() const {
+    if (!m_monoFont.getInfo().family.empty()) return m_monoFont;
+    return getFont();
 }
 
-Party& Game::getParty() {
-    return m_party;
-}
+GameStateManager& Game::getStates() { return m_stateManager; }
+Party& Game::getParty() { return m_party; }
+AssetManager& Game::getAssets() { return m_assets; }
+sf::RenderWindow& Game::getWindow() { return m_window; }
 
 void Game::requestShutdown() {
     if (dynamic_cast<ShutdownState*>(m_stateManager.getCurrentState()) != nullptr) return;
@@ -79,62 +171,106 @@ void Game::requestShutdown() {
 
 void Game::completeShutdown() {
     m_shutdownApproved = true;
+    AudioManager::getInstance().shutdown();
     m_window.close();
 }
 
 bool Game::isShutdownApproved() const { return m_shutdownApproved; }
 
 void Game::processEvents() {
-    sf::Event event;
-    // SFML 이벤트 큐에 쌓인 메시지 순차 수집
+    sf::Event event{};
     while (m_window.pollEvent(event)) {
-        // 윈도우 닫기 버튼 클릭 시 창 종료
         if (event.type == sf::Event::Closed) {
             requestShutdown();
             return;
         }
+        if (event.type == sf::Event::Resized) {
+            m_window.setView(computeLetterboxView(event.size.width, event.size.height));
+            continue;
+        }
+        if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::F11) {
+            toggleFullscreen();
+            continue;
+        }
 
-        // 현재 활성화된 게임 상태 객체로 이벤트 넘기기
-        GameState* currentState = m_stateManager.getCurrentState();
-        if (currentState) {
+        // 마우스 이벤트의 픽셀 좌표를 논리 1280x720 좌표계로 정규화해 전달하지 않고
+        // 각 상태가 mapPixelToLogical()을 호출할 수 있도록 원본 이벤트를 그대로 넘긴다.
+        if (GameState* currentState = m_stateManager.getCurrentState()) {
             currentState->handleInput(event);
         }
     }
 }
 
 void Game::update(sf::Time deltaTime) {
-    GameState* currentState = m_stateManager.getCurrentState();
-    if (currentState) {
+    const float dt = deltaTime.asSeconds();
+    if (m_fadeAlpha > 0.0f) {
+        m_fadeAlpha = std::max(0.0f, m_fadeAlpha - dt / m_fadeDuration);
+    }
+    if (m_toastTimer > 0.0f) {
+        m_toastTimer = std::max(0.0f, m_toastTimer - dt);
+    }
+
+    if (GameState* currentState = m_stateManager.getCurrentState()) {
         currentState->update(deltaTime);
     }
 }
 
 void Game::render() {
-    // 흑색에 가까운 다크 그린 레트로 배경색으로 프레임 버퍼 클리어
-    m_window.clear(sf::Color(5, 11, 5));
+    m_window.clear(sf::Color(9, 9, 13));
+    const auto sz = m_window.getSize();
+    m_window.setView(computeLetterboxView(sz.x, sz.y));
 
-    GameState* currentState = m_stateManager.getCurrentState();
-    if (currentState) {
+    if (GameState* currentState = m_stateManager.getCurrentState()) {
         currentState->draw(m_window);
     }
 
-    // 변경된 프레임 버퍼 화면 출력
+    // 전역 토스트 알림 오버레이
+    if (m_toastTimer > 0.0f && !m_toastMessage.empty()) {
+        const float alpha = std::min(1.0f, m_toastTimer * 1.6f);
+        sf::Text toastText;
+        toastText.setFont(getFont());
+        toastText.setCharacterSize(15);
+        toastText.setString(sf::String::fromUtf8(m_toastMessage.begin(), m_toastMessage.end()));
+        const auto b = toastText.getLocalBounds();
+        const float boxW = std::clamp(b.width + 44.0f, 240.0f, 680.0f);
+        const float boxH = 38.0f;
+        const float bx = (LOGICAL_WIDTH - boxW) * 0.5f;
+        const float by = 18.0f;
+
+        sf::RectangleShape bg({boxW, boxH});
+        bg.setPosition(bx, by);
+        bg.setFillColor(sf::Color(16, 17, 24, static_cast<sf::Uint8>(230.0f * alpha)));
+        bg.setOutlineThickness(2.0f);
+        bg.setOutlineColor(sf::Color(m_toastAccent.r, m_toastAccent.g, m_toastAccent.b,
+                                     static_cast<sf::Uint8>(240.0f * alpha)));
+        m_window.draw(bg);
+
+        toastText.setFillColor(sf::Color(242, 236, 224, static_cast<sf::Uint8>(255.0f * alpha)));
+        toastText.setPosition(bx + (boxW - b.width) * 0.5f - b.left,
+                              by + (boxH - b.height) * 0.5f - b.top - 1.0f);
+        m_window.draw(toastText);
+    }
+
+    // 부드러운 화면 페이드 인 오버레이
+    if (m_fadeAlpha > 0.005f) {
+        sf::RectangleShape fade({LOGICAL_WIDTH, LOGICAL_HEIGHT});
+        fade.setFillColor(sf::Color(5, 5, 8, static_cast<sf::Uint8>(255.0f * m_fadeAlpha)));
+        m_window.draw(fade);
+    }
+
     m_window.display();
 }
 
 void Game::loadResources() {
-    // 혼합 CJK/ASCII raster 검증을 통과한 Noto Sans CJK Regular를 사용한다.
     if (!m_cjkFont.loadFromFile(ResourceLocator::assetPath("fonts/NotoSansCJK-Regular.ttc").string())) {
-        std::cerr << "[Critical] CJK 다국어 폴백 폰트를 로드하지 못했습니다." << std::endl;
+        std::cerr << "[Critical] Failed to load NotoSansCJK-Regular.ttc" << std::endl;
     }
-
-    // 2. 한글/영어 공용 네오둥근모 레트로 폰트 우선 로드 시도
+    if (!m_monoFont.loadFromFile(ResourceLocator::assetPath("fonts/UbuntuMono[wght].ttf").string())) {
+        std::cerr << "[Warning] Failed to load UbuntuMono[wght].ttf" << std::endl;
+        m_monoFont = m_cjkFont;
+    }
     if (!m_font.loadFromFile(ResourceLocator::assetPath("fonts/neodgm.ttf").string())) {
-        std::cerr << "[Warning] neodgm.ttf 로드 실패. UbuntuMono[wght].ttf 로드를 시도합니다." << std::endl;
-        if (!m_font.loadFromFile(ResourceLocator::assetPath("fonts/UbuntuMono[wght].ttf").string())) {
-            std::cerr << "[Warning] Ubuntu Mono 폰트 로드 실패. CJK 폰트로 대체 사용합니다." << std::endl;
-            m_font = m_cjkFont; // CJK 폰트로 덮어쓰기 폴백
-        }
+        m_font = m_cjkFont;
     }
 }
 

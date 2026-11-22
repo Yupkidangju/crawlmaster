@@ -1,390 +1,945 @@
-// [v0.2.0] DungeonRenderer.cpp 신규 작성
-// 1인칭 사영 테이블을 활용한 와이어프레임 렌더링, FOW 동기화 미니맵, TUI 로그 인터페이스 그리기 구현.
-
 #include "view/DungeonRenderer.hpp"
-#include "model/DungeonMap.hpp"
-#include "model/Party.hpp"
+#include "core/AssetManager.hpp"
 #include "core/Game.hpp"
 #include "core/LocalizationManager.hpp"
-#include "view/PartyHudSnapshot.hpp"
+#include "model/DungeonMap.hpp"
+#include "model/Party.hpp"
+#include "view/UiSystem.hpp"
+#include "view/UiTheme.hpp"
+
+#include <algorithm>
+#include <array>
 #include <cmath>
-#include <iostream>
 
 namespace crawl {
+namespace {
 
-DungeonRenderer::DungeonRenderer(Game& game) : m_game(game) {}
+constexpr float PI_F = 3.14159265359f;
+constexpr float VIEWPORT_W = 1280.0f;
+constexpr float VIEWPORT_H = 588.0f;
+
+struct Vec3 {
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+};
+
+struct ClipVertex {
+    Vec3 viewPos;
+    float u = 0.0f;
+    float v = 0.0f;
+};
+
+struct RenderQuad {
+    const sf::Texture* albedo = nullptr;
+    const sf::Texture* normal = nullptr;
+    std::array<ClipVertex, 4> corners;
+    float avgDepth = 0.0f;
+    float dirShade = 1.0f;
+    int sortLayer = 0; // 0: floor/ceiling, 1: wall, 2: wall-mounted prop, 3: billboard
+    bool isBillboard = false;
+    bool additiveGlow = false;
+};
+
+// 근평면(z >= nearZ) Sutherland-Hodgman 폴리곤 클리핑
+std::vector<ClipVertex> clipToNearPlane(const std::array<ClipVertex, 4>& quad, float nearZ) {
+    std::vector<ClipVertex> poly(quad.begin(), quad.end());
+    std::vector<ClipVertex> out;
+    out.reserve(6);
+
+    for (std::size_t i = 0; i < poly.size(); ++i) {
+        const ClipVertex& a = poly[i];
+        const ClipVertex& b = poly[(i + 1) % poly.size()];
+        const bool aIn = a.viewPos.z >= nearZ;
+        const bool bIn = b.viewPos.z >= nearZ;
+
+        if (aIn && bIn) {
+            out.push_back(b);
+        } else if (aIn && !bIn) {
+            const float t = (nearZ - a.viewPos.z) / (b.viewPos.z - a.viewPos.z);
+            out.push_back({
+                {a.viewPos.x + (b.viewPos.x - a.viewPos.x) * t,
+                 a.viewPos.y + (b.viewPos.y - a.viewPos.y) * t, nearZ},
+                a.u + (b.u - a.u) * t, a.v + (b.v - a.v) * t
+            });
+        } else if (!aIn && bIn) {
+            const float t = (nearZ - a.viewPos.z) / (b.viewPos.z - a.viewPos.z);
+            out.push_back({
+                {a.viewPos.x + (b.viewPos.x - a.viewPos.x) * t,
+                 a.viewPos.y + (b.viewPos.y - a.viewPos.y) * t, nearZ},
+                a.u + (b.u - a.u) * t, a.v + (b.v - a.v) * t
+            });
+            out.push_back(b);
+        }
+    }
+    return out;
+}
+
+float shortestAngleDelta(float from, float to) {
+    float diff = std::fmod(to - from + PI_F, 2.0f * PI_F);
+    if (diff < 0.0f) diff += 2.0f * PI_F;
+    return diff - PI_F;
+}
+
+sf::Color blendColor(sf::Color a, sf::Color b, float t) {
+    t = std::clamp(t, 0.0f, 1.0f);
+    return sf::Color(
+        static_cast<sf::Uint8>(static_cast<float>(a.r) * (1.0f - t) + static_cast<float>(b.r) * t),
+        static_cast<sf::Uint8>(static_cast<float>(a.g) * (1.0f - t) + static_cast<float>(b.g) * t),
+        static_cast<sf::Uint8>(static_cast<float>(a.b) * (1.0f - t) + static_cast<float>(b.b) * t),
+        255
+    );
+}
+
+} // namespace
+
+DungeonRenderer::DungeonRenderer(Game& game) : m_game(game) {
+    m_dust.resize(36);
+    for (std::size_t i = 0; i < m_dust.size(); ++i) {
+        m_dust[i] = DustMote{
+            static_cast<float>((i * 173) % 1280),
+            static_cast<float>((i * 97) % 560),
+            -12.0f + static_cast<float>((i * 29) % 24),
+            -18.0f - static_cast<float>((i * 17) % 18),
+            3.0f + static_cast<float>((i * 13) % 5),
+            static_cast<float>(i) * 0.45f
+        };
+    }
+}
+
+float DungeonRenderer::directionToYaw(Direction dir) {
+    switch (dir) {
+        case Direction::NORTH: return -PI_F * 0.5f;
+        case Direction::EAST:  return 0.0f;
+        case Direction::SOUTH: return PI_F * 0.5f;
+        case Direction::WEST:  return PI_F;
+    }
+    return 0.0f;
+}
+
+void DungeonRenderer::syncCameraImmediate(const DungeonMap& map) {
+    m_camX = static_cast<float>(map.getPlayerX());
+    m_camY = static_cast<float>(map.getPlayerY());
+    m_camYaw = directionToYaw(map.getPlayerDir());
+    m_cameraInitialized = true;
+}
+
+void DungeonRenderer::notifyStep(bool bumped) {
+    if (bumped) {
+        m_bumpTimer = 0.14f;
+    } else {
+        m_headBobAmp = 1.0f;
+    }
+}
+
+void DungeonRenderer::triggerDamageFlash(float intensity) {
+    m_damageFlash = std::max(m_damageFlash, std::clamp(intensity, 0.0f, 1.0f));
+}
+
+void DungeonRenderer::update(float dt, const DungeonMap& map) {
+    m_time += dt;
+    if (!m_cameraInitialized) {
+        syncCameraImmediate(map);
+    }
+
+    const float targetX = static_cast<float>(map.getPlayerX());
+    const float targetY = static_cast<float>(map.getPlayerY());
+    const float targetYaw = directionToYaw(map.getPlayerDir());
+
+    // 층 전환 등으로 거리가 멀어졌을 때는 즉시 스냅
+    if (std::abs(targetX - m_camX) > 2.2f || std::abs(targetY - m_camY) > 2.2f) {
+        m_camX = targetX;
+        m_camY = targetY;
+        m_camYaw = targetYaw;
+    } else {
+        const float moveAlpha = 1.0f - std::exp(-dt * 15.0f);
+        const float turnAlpha = 1.0f - std::exp(-dt * 17.0f);
+        m_camX += (targetX - m_camX) * moveAlpha;
+        m_camY += (targetY - m_camY) * moveAlpha;
+        m_camYaw += shortestAngleDelta(m_camYaw, targetYaw) * turnAlpha;
+    }
+
+    if (m_headBobAmp > 0.01f) {
+        m_headBobPhase += dt * 15.0f;
+        m_headBobAmp = std::max(0.0f, m_headBobAmp - dt * 4.5f);
+    }
+    if (m_bumpTimer > 0.0f) {
+        m_bumpTimer = std::max(0.0f, m_bumpTimer - dt);
+    }
+    if (m_damageFlash > 0.0f) {
+        m_damageFlash = std::max(0.0f, m_damageFlash - dt * 2.2f);
+    }
+
+    for (auto& d : m_dust) {
+        d.x += (d.vx + std::sin(m_time + d.phase) * 9.0f) * dt;
+        d.y += d.vy * dt;
+        if (d.y < -12.0f) {
+            d.y = VIEWPORT_H + 8.0f;
+            d.x = std::fmod(d.x + 1400.0f, VIEWPORT_W);
+        }
+        if (d.x < -12.0f) d.x += VIEWPORT_W + 24.0f;
+        if (d.x > VIEWPORT_W + 12.0f) d.x -= VIEWPORT_W + 24.0f;
+    }
+}
+
+void DungeonRenderer::ensureOffscreenTarget(unsigned int width, unsigned int height) {
+    if (m_offscreenReady && m_sceneBuffer.getSize().x == width && m_sceneBuffer.getSize().y == height) {
+        return;
+    }
+    m_offscreenReady = m_sceneBuffer.create(width, height);
+    if (m_offscreenReady) {
+        m_sceneBuffer.setSmooth(true);
+    }
+}
+
+void DungeonRenderer::render3DScene(sf::RenderTarget& target, sf::FloatRect vp, const DungeonMap& map,
+                                    int floorNumber, const std::vector<WorldObject>& objects,
+                                    const Party* party, bool combatBackdropMode, float extraDamageFlash) {
+    auto& assets = m_game.getAssets();
+    const BiomeType biome = map.getBiome();
+    const std::string slug = map.getBiomeSlug();
+    const auto profile = UiTheme::biomeProfile(biome);
+
+    const bool useShaders = assets.shadersAvailable() &&
+                            LocalizationManager::getInstance().getGraphicsQuality() > 0;
+    if (useShaders) {
+        ensureOffscreenTarget(static_cast<unsigned int>(vp.width), static_cast<unsigned int>(vp.height));
+    }
+
+    sf::RenderTarget* drawDst = (useShaders && m_offscreenReady)
+                                    ? static_cast<sf::RenderTarget*>(&m_sceneBuffer)
+                                    : &target;
+    const float offX = (drawDst == &m_sceneBuffer) ? 0.0f : vp.left;
+    const float offY = (drawDst == &m_sceneBuffer) ? 0.0f : vp.top;
+
+    // 1. 천장/바닥 원거리 안개 그라데이션 배경
+    if (drawDst == &m_sceneBuffer) {
+        m_sceneBuffer.clear(profile.fogColor);
+    } else {
+        sf::RectangleShape sky({vp.width, vp.height});
+        sky.setPosition(offX, offY);
+        sky.setFillColor(profile.fogColor);
+        drawDst->draw(sky);
+    }
+
+    // 텍스처 확보
+    const sf::Texture* wallTex = assets.getBiomeTexture(slug, "wall");
+    const sf::Texture* wallNorm = assets.getTexture("textures/biomes/wall_" + slug + "_n.png", true, true);
+    const sf::Texture* floorTex = assets.getBiomeTexture(slug, "floor");
+    const sf::Texture* floorNorm = assets.getTexture("textures/biomes/floor_" + slug + "_n.png", true, true);
+    const sf::Texture* ceilTex = assets.getBiomeTexture(slug, "ceiling");
+    const sf::Texture* doorWood = assets.getTexture("textures/biomes/door_wood.png", false, true);
+    const sf::Texture* doorWoodN = assets.getTexture("textures/biomes/door_wood_n.png", false, true);
+    const sf::Texture* doorLocked = assets.getTexture("textures/biomes/door_locked.png", false, true);
+    const sf::Texture* doorLockedN = assets.getTexture("textures/biomes/door_locked_n.png", false, true);
+    const sf::Texture* bossGate = assets.getTexture("textures/biomes/boss_gate.png", false, true);
+    const sf::Texture* bossGateN = assets.getTexture("textures/biomes/boss_gate_n.png", false, true);
+    const sf::Texture* secretTex = assets.getTexture("textures/biomes/secret_wall.png", false, true);
+    const sf::Texture* secretNorm = assets.getTexture("textures/biomes/secret_wall_n.png", false, true);
+    const sf::Texture* stairsUp = assets.getTexture("textures/biomes/stairs_up.png", false, true);
+    const sf::Texture* stairsDown = assets.getTexture("textures/biomes/stairs_down.png", false, true);
+    const sf::Texture* torchProp = assets.getPropTexture("prop_torch");
+
+    // 2. 카메라 기준 벡터 계산
+    const float fx = std::cos(m_camYaw);
+    const float fz = std::sin(m_camYaw);
+    const float rx = -fz;
+    const float rz = fx;
+    const float bumpOffset = (m_bumpTimer > 0.0f) ? std::sin(m_bumpTimer * 45.0f) * 0.08f : 0.0f;
+    const float eyeX = m_camX + 0.5f + fx * bumpOffset;
+    const float eyeZ = m_camY + 0.5f + fz * bumpOffset;
+    const float eyeY = 0.52f + std::sin(m_headBobPhase) * 0.028f * m_headBobAmp;
+
+    auto toView = [&](float wx, float wy, float wz) -> Vec3 {
+        const float dx = wx - eyeX;
+        const float dy = wy - eyeY;
+        const float dz = wz - eyeZ;
+        return {dx * rx + dz * rz, dy, dx * fx + dz * fz};
+    };
+
+    std::vector<RenderQuad> quads;
+    quads.reserve(420);
+
+    auto pushSubdividedQuad = [&](Vec3 p0, Vec3 p1, Vec3 p2, Vec3 p3,
+                                  const sf::Texture* alb, const sf::Texture* nrm,
+                                  float dirShade, int subdiv, int sortLayer = 1,
+                                  bool billboard = false, bool addGlow = false) {
+        if (!alb) return;
+        const auto tsz = alb->getSize();
+        const float tw = static_cast<float>(tsz.x);
+        const float th = static_cast<float>(tsz.y);
+
+        auto lerp3 = [](Vec3 a, Vec3 b, float t) -> Vec3 {
+            return {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t};
+        };
+
+        for (int sy = 0; sy < subdiv; ++sy) {
+            const float v0 = static_cast<float>(sy) / static_cast<float>(subdiv);
+            const float v1 = static_cast<float>(sy + 1) / static_cast<float>(subdiv);
+            const Vec3 left0 = lerp3(p0, p3, v0);
+            const Vec3 right0 = lerp3(p1, p2, v0);
+            const Vec3 left1 = lerp3(p0, p3, v1);
+            const Vec3 right1 = lerp3(p1, p2, v1);
+
+            for (int sx = 0; sx < subdiv; ++sx) {
+                const float u0 = static_cast<float>(sx) / static_cast<float>(subdiv);
+                const float u1 = static_cast<float>(sx + 1) / static_cast<float>(subdiv);
+                const Vec3 c0 = toView(lerp3(left0, right0, u0).x, lerp3(left0, right0, u0).y, lerp3(left0, right0, u0).z);
+                const Vec3 c1 = toView(lerp3(left0, right0, u1).x, lerp3(left0, right0, u1).y, lerp3(left0, right0, u1).z);
+                const Vec3 c2 = toView(lerp3(left1, right1, u1).x, lerp3(left1, right1, u1).y, lerp3(left1, right1, u1).z);
+                const Vec3 c3 = toView(lerp3(left1, right1, u0).x, lerp3(left1, right1, u0).y, lerp3(left1, right1, u0).z);
+                if (c0.z < 0.14f && c1.z < 0.14f && c2.z < 0.14f && c3.z < 0.14f) continue;
+
+                RenderQuad q;
+                q.albedo = alb;
+                q.normal = nrm ? nrm : alb;
+                q.corners = {{
+                    {c0, u0 * tw, v0 * th},
+                    {c1, u1 * tw, v0 * th},
+                    {c2, u1 * tw, v1 * th},
+                    {c3, u0 * tw, v1 * th}
+                }};
+                q.avgDepth = (std::max(0.14f, c0.z) + std::max(0.14f, c1.z) +
+                              std::max(0.14f, c2.z) + std::max(0.14f, c3.z)) * 0.25f;
+                q.dirShade = dirShade;
+                q.sortLayer = sortLayer;
+                q.isBillboard = billboard;
+                q.additiveGlow = addGlow;
+                quads.push_back(q);
+            }
+        }
+    };
+
+    // 3. 가시 영역(반경 7칸) 내 3D 던전 셀 메시 수집
+    const int cx0 = static_cast<int>(std::floor(eyeX));
+    const int cz0 = static_cast<int>(std::floor(eyeZ));
+    constexpr int RADIUS = 7;
+
+    for (int gz = cz0 - RADIUS; gz <= cz0 + RADIUS; ++gz) {
+        for (int gx = cx0 - RADIUS; gx <= cx0 + RADIUS; ++gx) {
+            if (gx < 0 || gx >= DungeonMap::MAP_WIDTH || gz < 0 || gz >= DungeonMap::MAP_HEIGHT) continue;
+            const float cellDist = std::hypot(static_cast<float>(gx) + 0.5f - eyeX,
+                                              static_cast<float>(gz) + 0.5f - eyeZ);
+            if (cellDist > 7.4f) continue;
+
+            // 카메라 뒤쪽 셀은 빠르게 컬링
+            const float fwdDot = (static_cast<float>(gx) + 0.5f - eyeX) * fx +
+                                 (static_cast<float>(gz) + 0.5f - eyeZ) * fz;
+            if (fwdDot < -1.1f) continue;
+
+            const TileType t = map.getTile(gx, gz);
+            if (!map.isWalkable(gx, gz)) continue;
+
+            const float x0 = static_cast<float>(gx);
+            const float x1 = x0 + 1.0f;
+            const float z0 = static_cast<float>(gz);
+            const float z1 = z0 + 1.0f;
+            // 근접 셀 정밀 세분화로 2D 아핀 UV 왜곡을 완전 제거
+            const int sub = (cellDist < 1.35f) ? 8 : ((cellDist < 2.6f) ? 4 : ((cellDist < 4.2f) ? 2 : 1));
+
+            // 바닥 & 천장
+            const sf::Texture* fTex = floorTex;
+            if (t == TileType::UPSTAIRS && stairsUp) fTex = stairsUp;
+            else if (t == TileType::DOWNSTAIRS && stairsDown) fTex = stairsDown;
+
+            pushSubdividedQuad({x0, 0.0f, z0}, {x1, 0.0f, z0}, {x1, 0.0f, z1}, {x0, 0.0f, z1},
+                               fTex, floorNorm, 0.92f, sub, 0);
+            pushSubdividedQuad({x0, 1.0f, z1}, {x1, 1.0f, z1}, {x1, 1.0f, z0}, {x0, 1.0f, z0},
+                               ceilTex, wallNorm, 0.68f, sub, 0);
+
+            // 인접 비통행/특수 타일 벽면 생성 + 벽면 횃불 브래킷 배치
+            struct WallEdge {
+                int nx, nz;
+                Vec3 a, b, c, d;
+                Vec3 torchPos;
+                float shade;
+            };
+            const std::array<WallEdge, 4> edges = {{
+                {gx, gz - 1, {x0, 1.0f, z0}, {x1, 1.0f, z0}, {x1, 0.0f, z0}, {x0, 0.0f, z0}, {x0 + 0.5f, 0.62f, z0 + 0.06f}, 1.00f},
+                {gx, gz + 1, {x1, 1.0f, z1}, {x0, 1.0f, z1}, {x0, 0.0f, z1}, {x1, 0.0f, z1}, {x0 + 0.5f, 0.62f, z1 - 0.06f}, 0.96f},
+                {gx - 1, gz, {x0, 1.0f, z1}, {x0, 1.0f, z0}, {x0, 0.0f, z0}, {x0, 0.0f, z1}, {x0 + 0.06f, 0.62f, z0 + 0.5f}, 0.84f},
+                {gx + 1, gz, {x1, 1.0f, z0}, {x1, 1.0f, z1}, {x1, 0.0f, z1}, {x1, 0.0f, z0}, {x1 - 0.06f, 0.62f, z0 + 0.5f}, 0.84f}
+            }};
+
+            for (const auto& e : edges) {
+                const TileType nt = map.getTile(e.nx, e.nz);
+                const bool renderFace = !map.isWalkable(e.nx, e.nz) ||
+                                        nt == TileType::BOSS_GATE || nt == TileType::DOOR;
+                if (!renderFace) continue;
+
+                const sf::Texture* wAlb = wallTex;
+                const sf::Texture* wNrm = wallNorm;
+                if (nt == TileType::SECRET_WALL && secretTex) {
+                    wAlb = secretTex;
+                    wNrm = secretNorm;
+                } else if (nt == TileType::LOCKED_GATE && doorLocked) {
+                    wAlb = doorLocked;
+                    wNrm = doorLockedN;
+                } else if (nt == TileType::BOSS_GATE && bossGate) {
+                    wAlb = bossGate;
+                    wNrm = bossGateN;
+                } else if (nt == TileType::DOOR && doorWood) {
+                    // 문은 인접한 문 타일 쪽으로 바라볼 때만 나무 문 아치 표현
+                    if (t == TileType::DOOR) continue;
+                    wAlb = doorWood;
+                    wNrm = doorWoodN;
+                }
+
+                pushSubdividedQuad(e.a, e.b, e.c, e.d, wAlb, wNrm, e.shade, sub, 1);
+
+                // 규칙적 간격의 석벽에 흔들리는 벽면 횃불 소품 배치
+                if (nt == TileType::WALL && torchProp && ((gx * 7 + gz * 13 + e.nx * 3) & 7) == 0 && cellDist > 0.6f) {
+                    const float hs = 0.16f;
+                    const float ht = 0.28f;
+                    const Vec3 tp = e.torchPos;
+                    pushSubdividedQuad(
+                        {tp.x - rx * hs, tp.y + ht, tp.z - rz * hs},
+                        {tp.x + rx * hs, tp.y + ht, tp.z + rz * hs},
+                        {tp.x + rx * hs, tp.y - ht * 0.6f, tp.z + rz * hs},
+                        {tp.x - rx * hs, tp.y - ht * 0.6f, tp.z - rz * hs},
+                        torchProp, nullptr, 1.0f, 1, 2, true, false);
+                }
+            }
+        }
+    }
+
+    // 4. 3D 월드 오브젝트 빌보드 (보물상자·성소·레버·탐지함정·NPC·성유물·로어·보스)
+    if (!combatBackdropMode) {
+        const bool hasRogue = party && party->hasClassInParty(CharacterClass::ROGUE);
+        for (const auto& obj : objects) {
+            if (obj.floor != floorNumber) continue;
+            if (obj.state == WorldObjectState::RESOLVED && obj.kind != WorldObjectKind::CHEST) continue;
+            if (obj.kind == WorldObjectKind::TRAP && !hasRogue && obj.state == WorldObjectState::PRESENT) continue;
+            if ((obj.kind == WorldObjectKind::QUEST_ITEM || obj.kind == WorldObjectKind::NPC) &&
+                party && !party->hasQuest(obj.questId)) continue;
+
+            const float ox = static_cast<float>(obj.x) + 0.5f;
+            const float oz = static_cast<float>(obj.y) + 0.5f;
+            const float dist = std::hypot(ox - eyeX, oz - eyeZ);
+            if (dist < 0.35f || dist > 6.8f) continue;
+
+            const sf::Texture* propTex = nullptr;
+            float width = 0.52f;
+            float height = 0.56f;
+            float baseY = 0.02f;
+            switch (obj.kind) {
+                case WorldObjectKind::CHEST:
+                    propTex = assets.getPropTexture(
+                        obj.state == WorldObjectState::RESOLVED ? "prop_chest_open" : "prop_chest_closed");
+                    width = 0.46f;
+                    height = 0.42f;
+                    break;
+                case WorldObjectKind::SANCTUARY:
+                    propTex = assets.getPropTexture("prop_sanctuary");
+                    width = 0.62f;
+                    height = 0.66f;
+                    break;
+                case WorldObjectKind::LEVER:
+                    propTex = assets.getPropTexture("prop_lever");
+                    width = 0.38f;
+                    height = 0.48f;
+                    break;
+                case WorldObjectKind::TRAP:
+                    propTex = assets.getPropTexture("prop_trap");
+                    width = 0.54f;
+                    height = 0.32f;
+                    break;
+                case WorldObjectKind::NPC:
+                    propTex = assets.getPropTexture("prop_npc_scout");
+                    width = 0.56f;
+                    height = 0.72f;
+                    break;
+                case WorldObjectKind::QUEST_ITEM:
+                    propTex = assets.getPropTexture("prop_relic");
+                    width = 0.42f;
+                    height = 0.48f;
+                    baseY = 0.14f + std::sin(m_time * 3.0f) * 0.04f;
+                    break;
+                case WorldObjectKind::LORE_PLAQUE:
+                    propTex = assets.getPropTexture("prop_lore");
+                    width = 0.46f;
+                    height = 0.62f;
+                    break;
+                case WorldObjectKind::QUEST_BOSS:
+                    propTex = assets.getMonsterTexture(obj.targetId);
+                    width = 0.78f;
+                    height = 0.86f;
+                    break;
+            }
+            if (!propTex) continue;
+            const float hw = width * 0.5f;
+            pushSubdividedQuad(
+                {ox - rx * hw, baseY + height, oz - rz * hw},
+                {ox + rx * hw, baseY + height, oz + rz * hw},
+                {ox + rx * hw, baseY, oz + rz * hw},
+                {ox - rx * hw, baseY, oz - rz * hw},
+                propTex, nullptr, 1.0f, 1, 3, true, false);
+        }
+    }
+
+    // 원근 깊이 정렬 (엄격한 약순서 보장: 먼 것부터, 동일 깊이 띠에서는 바닥/천장 → 벽 → 오브젝트 순)
+    std::sort(quads.begin(), quads.end(), [](const RenderQuad& a, const RenderQuad& b) {
+        const float keyA = a.avgDepth - static_cast<float>(a.sortLayer) * 0.015f;
+        const float keyB = b.avgDepth - static_cast<float>(b.sortLayer) * 0.015f;
+        return keyA > keyB;
+    });
+
+    // 5. 원근 투영 및 GLSL / Software-Textured 3D 드로우
+    const float focal = vp.height * 0.90f;
+    const float halfW = vp.width * 0.5f;
+    const float halfH = vp.height * 0.5f;
+    const float torchFlicker = 1.05f + std::sin(m_time * 7.3f) * 0.08f + std::sin(m_time * 13.7f) * 0.05f;
+    sf::Shader* litShader = (useShaders && m_offscreenReady) ? assets.getDungeonShader() : nullptr;
+
+    if (litShader) {
+        litShader->setUniform("u_fogColor", sf::Glsl::Vec3(
+            profile.fogColor.r / 255.0f, profile.fogColor.g / 255.0f, profile.fogColor.b / 255.0f));
+        litShader->setUniform("u_torchColor", sf::Glsl::Vec3(
+            profile.torchColor.r / 255.0f, profile.torchColor.g / 255.0f, profile.torchColor.b / 255.0f));
+        litShader->setUniform("u_ambientColor", sf::Glsl::Vec3(
+            profile.ambientColor.r / 255.0f, profile.ambientColor.g / 255.0f, profile.ambientColor.b / 255.0f));
+        litShader->setUniform("u_torchIntensity", combatBackdropMode ? torchFlicker * 0.72f : torchFlicker * 1.18f);
+        litShader->setUniform("u_time", m_time);
+        litShader->setUniform("u_wetness", profile.wetness);
+        litShader->setUniform("u_emissiveBoost", profile.emissiveBoost);
+    }
+
+    for (const auto& q : quads) {
+        const auto clipped = clipToNearPlane(q.corners, 0.14f);
+        if (clipped.size() < 3) continue;
+
+        sf::VertexArray fan(sf::TriangleFan, clipped.size());
+        for (std::size_t i = 0; i < clipped.size(); ++i) {
+            const auto& cv = clipped[i];
+            const float invZ = 1.0f / std::max(0.14f, cv.viewPos.z);
+            const float sx = offX + halfW + cv.viewPos.x * focal * invZ;
+            const float sy = offY + halfH - cv.viewPos.y * focal * invZ;
+
+            const float dist = std::sqrt(cv.viewPos.x * cv.viewPos.x + cv.viewPos.z * cv.viewPos.z);
+            const float lightAtten = std::clamp(1.0f / (1.0f + 0.19f * dist + 0.08f * dist * dist), 0.05f, 1.0f);
+            const float fogFactor = std::clamp(std::exp(-dist * profile.fogDensity), 0.04f, 1.0f);
+
+            sf::Color vcol;
+            if (litShader && !q.isBillboard) {
+                vcol = sf::Color(
+                    static_cast<sf::Uint8>(lightAtten * 255.0f),
+                    static_cast<sf::Uint8>(std::clamp(q.dirShade, 0.0f, 1.0f) * 255.0f),
+                    static_cast<sf::Uint8>(fogFactor * 255.0f),
+                    255
+                );
+            } else {
+                // GL 1.1 소프트웨어 텍스처 3D 폴백 및 빌보드용 정밀 CPU 동적 횃불 + 안개 색조
+                const float litScale = (combatBackdropMode ? 0.62f : 1.0f) *
+                                       q.dirShade * (0.34f + lightAtten * torchFlicker * 0.92f);
+                const sf::Color litTint(
+                    static_cast<sf::Uint8>(std::clamp(profile.ambientColor.r + profile.torchColor.r * litScale * 0.85f, 0.0f, 255.0f)),
+                    static_cast<sf::Uint8>(std::clamp(profile.ambientColor.g + profile.torchColor.g * litScale * 0.85f, 0.0f, 255.0f)),
+                    static_cast<sf::Uint8>(std::clamp(profile.ambientColor.b + profile.torchColor.b * litScale * 0.85f, 0.0f, 255.0f)),
+                    255
+                );
+                vcol = blendColor(profile.fogColor, litTint, fogFactor);
+            }
+
+            fan[i] = sf::Vertex({sx, sy}, vcol, {cv.u, cv.v});
+        }
+
+        sf::RenderStates states;
+        states.texture = q.albedo;
+        if (q.additiveGlow) states.blendMode = sf::BlendAdd;
+        if (litShader && !q.isBillboard) {
+            litShader->setUniform("u_albedo", sf::Shader::CurrentTexture);
+            litShader->setUniform("u_normal", *q.normal);
+            states.shader = litShader;
+        }
+        drawDst->draw(fan, states);
+    }
+
+    // 6. 바이옴 3D 부유 입자 (먼지·포자·영혼불·화염 불씨·금빛 재)
+    const sf::Texture* glowTex = assets.getUiTexture("particle_glow");
+    for (const auto& d : m_dust) {
+        const float pulse = 0.45f + 0.55f * std::sin(m_time * 2.2f + d.phase);
+        sf::Color pc = profile.particleColor;
+        pc.a = static_cast<sf::Uint8>(static_cast<float>(pc.a) * pulse * (combatBackdropMode ? 0.7f : 1.0f));
+        if (glowTex) {
+            sf::Sprite sp(*glowTex);
+            const auto sz = glowTex->getSize();
+            sp.setOrigin(static_cast<float>(sz.x) * 0.5f, static_cast<float>(sz.y) * 0.5f);
+            const float sc = (d.size * 3.2f) / static_cast<float>(sz.x);
+            sp.setScale(sc, sc);
+            sp.setPosition(offX + d.x * (vp.width / VIEWPORT_W), offY + d.y * (vp.height / VIEWPORT_H));
+            sp.setColor(pc);
+            drawDst->draw(sp, sf::BlendAdd);
+        }
+    }
+
+    // 7. 포스트프로세싱 (블룸 + 다크 판타지 필름 톤매핑 + 비네트 + 피격 플래시)
+    const float flash = std::max(m_damageFlash, extraDamageFlash);
+    if (drawDst == &m_sceneBuffer) {
+        m_sceneBuffer.display();
+        sf::Sprite sceneSprite(m_sceneBuffer.getTexture());
+        sceneSprite.setPosition(vp.left, vp.top);
+        if (sf::Shader* post = assets.getPostShader()) {
+            post->setUniform("u_scene", sf::Shader::CurrentTexture);
+            post->setUniform("u_texelSize", sf::Vector2f(1.0f / vp.width, 1.0f / vp.height));
+            post->setUniform("u_tint", sf::Glsl::Vec3(profile.postTint.x, profile.postTint.y, profile.postTint.z));
+            post->setUniform("u_vignetteStrength", combatBackdropMode ? 0.62f : 0.44f);
+            post->setUniform("u_bloomStrength", combatBackdropMode ? 0.35f : 0.52f);
+            post->setUniform("u_damageFlash", flash);
+            post->setUniform("u_time", m_time);
+            target.draw(sceneSprite, post);
+        } else {
+            target.draw(sceneSprite);
+        }
+    } else {
+        // 소프트웨어 텍스처 폴백 경로용 비네트 및 피격 플래시
+        if (const sf::Texture* vig = assets.getUiTexture("vignette")) {
+            sf::Sprite vsp(*vig);
+            const auto vsz = vig->getSize();
+            vsp.setScale(vp.width / static_cast<float>(vsz.x), vp.height / static_cast<float>(vsz.y));
+            vsp.setPosition(vp.left, vp.top);
+            target.draw(vsp);
+        }
+        if (flash > 0.01f) {
+            sf::RectangleShape hit({vp.width, vp.height});
+            hit.setPosition(vp.left, vp.top);
+            hit.setFillColor(sf::Color(185, 22, 22, static_cast<sf::Uint8>(flash * 125.0f)));
+            target.draw(hit);
+        }
+    }
+}
+
+void DungeonRenderer::renderCombatBackdrop(sf::RenderTarget& target, const DungeonMap& map,
+                                           float elapsedTime, float damageFlash) {
+    m_time = elapsedTime;
+    syncCameraImmediate(map);
+    render3DScene(target, {0.0f, 0.0f, Game::LOGICAL_WIDTH, Game::LOGICAL_HEIGHT},
+                  map, map.getFloorNumber(), {}, nullptr, true, damageFlash);
+    sf::RectangleShape shade({Game::LOGICAL_WIDTH, Game::LOGICAL_HEIGHT});
+    shade.setFillColor(sf::Color(6, 6, 10, 88));
+    target.draw(shade);
+}
 
 void DungeonRenderer::render(sf::RenderWindow& window, const DungeonMap& map, const Party& party,
                              const std::vector<std::string>& logQueue, int floorNumber,
-                             const std::vector<WorldObject>& objects) {
-    // 1. 1인칭 와이어프레임 3D 뷰포트 그리기
-    draw3DViewport(window, map);
+                             const std::vector<WorldObject>& objects,
+                             DungeonHudInteraction& outUi) {
+    auto& assets = m_game.getAssets();
+    const auto& font = m_game.getFont();
+    const auto& lm = LocalizationManager::getInstance();
 
-    // 2. HUD 격자 프레임선 그리기 (네온 스타일 경계선)
-    drawHUDFrame(window, buildPartyHudSnapshot(party));
+    // 1. 풀폭 1인칭 3D 던전 뷰포트 (1280x588)
+    render3DScene(window, {0.0f, 0.0f, VIEWPORT_W, VIEWPORT_H}, map, floorNumber, objects, &party, false, 0.0f);
 
-    // 3. 미니맵 그리기 (방문 지역 안개 해제 표시)
-    drawMiniMap(window, map, party, floorNumber, objects);
+    // 2. 좌상단 바이옴·층수·나침반 배지
+    const sf::FloatRect badgeRect(14.0f, 12.0f, 332.0f, 58.0f);
+    UiSystem::drawPanel(window, assets, badgeRect, true, 224);
+    const std::string biomeName = lm.get("BIOME_" + std::to_string(floorNumber) + "_NAME");
+    const std::string floorTitle = lm.format("DUNGEON_FLOOR_LABEL", {{"floor", std::to_string(floorNumber)}}) +
+                                   " · " + biomeName;
+    UiSystem::drawText(window, font, floorTitle, {28.0f, 20.0f}, 15, UiTheme::textGold(), true, 304.0f);
 
-    // 4. 로그 메시지 그리기
-    drawLogWindow(window, logQueue);
-}
+    const char* dirLabel = "N";
+    switch (map.getPlayerDir()) {
+        case Direction::NORTH: dirLabel = "N"; break;
+        case Direction::EAST:  dirLabel = "E"; break;
+        case Direction::SOUTH: dirLabel = "S"; break;
+        case Direction::WEST:  dirLabel = "W"; break;
+    }
+    const std::string sub = std::string(dirLabel) + "  (" + std::to_string(map.getPlayerX()) + "," +
+                            std::to_string(map.getPlayerY()) + ")  |  " +
+                            std::to_string(map.getProgressPercent()) + "%  |  " +
+                            std::to_string(party.getGold()) + " G";
+    UiSystem::drawText(window, font, sub, {28.0f, 43.0f}, 12, UiTheme::textMuted(), false, 304.0f);
 
-void DungeonRenderer::draw3DViewport(sf::RenderWindow& window, const DungeonMap& map) {
-    // 플레이어 정보 획득
-    int px = map.getPlayerX();
-    int py = map.getPlayerY();
-    Direction dir = map.getPlayerDir();
+    // 3. 우상단 컬러 미니맵 & 하단 탐험 로그
+    outUi.minimapRect = {1044.0f, 12.0f, 222.0f, 232.0f};
+    drawMiniMap(window, outUi.minimapRect, map, party, floorNumber, objects);
+    drawExplorationLog(window, {1044.0f, 252.0f, 222.0f, 168.0f}, logQueue);
 
-    // 시선 방향 벡터(F) 및 우측 방향 수직 벡터(R) 산출
-    int fx = 0, fy = 0;
-    int rx = 0, ry = 0;
-
-    switch (dir) {
-        case Direction::NORTH: fx = 0;  fy = -1; rx = 1;  ry = 0;  break;
-        case Direction::EAST:  fx = 1;  fy = 0;  rx = 0;  ry = 1;  break;
-        case Direction::SOUTH: fx = 0;  fy = 1;  rx = -1; ry = 0;  break;
-        case Direction::WEST:  fx = -1; fy = 0;  rx = 0;  ry = -1; break;
+    // 4. 중앙 하단 상호작용 프롬프트 배너 (상자/함정/레버/성소/계단/비밀벽/NPC/보스)
+    if (outUi.canInteract && !outUi.interactPrompt.empty()) {
+        outUi.interactBannerRect = {410.0f, 522.0f, 460.0f, 44.0f};
+        const bool hov = outUi.interactBannerRect.contains(outUi.mousePos);
+        UiSystem::drawButton(window, assets, font, {
+            outUi.interactBannerRect, outUi.interactPrompt, "E", false, hov, true, true
+        });
+    } else {
+        outUi.interactBannerRect = {};
     }
 
-    sf::Color lineColor = sf::Color(51, 255, 51); // 네온 그린
+    // 5. 하단 4인 초상화 파티 독 + 우측 퀵 메뉴 독
+    drawPartyDock(window, buildPartyHudSnapshot(party), outUi);
 
-    // 깊이 d = 0부터 3까지 루프를 돌며 와이어프레임 선 그리기
-    for (int d = 0; d < 4; ++d) {
-        // 현재 및 다음 깊이에서의 코너 꼭짓점 좌표 미리 계산
-        float w_curr = W_TABLE[d];
-        float h_curr = H_TABLE[d];
-        float w_next = W_TABLE[d+1];
-        float h_next = H_TABLE[d+1];
-
-        // 깊이 d의 좌상(TL), 우상(TR), 우하(BR), 좌하(BL)
-        float tl_x = CX - w_curr / 2.0f;  float tl_y = CY - h_curr / 2.0f;
-        float tr_x = CX + w_curr / 2.0f;  float tr_y = CY - h_curr / 2.0f;
-        float br_x = CX + w_curr / 2.0f;  float br_y = CY + h_curr / 2.0f;
-        float bl_x = CX - w_curr / 2.0f;  float bl_y = CY + h_curr / 2.0f;
-
-        // 깊이 d+1의 좌상(nTL), 우상(nTR), 우하(nBR), 좌하(nBL)
-        float ntl_x = CX - w_next / 2.0f; float ntl_y = CY - h_next / 2.0f;
-        float ntr_x = CX + w_next / 2.0f; float ntr_y = CY - h_next / 2.0f;
-        float nbr_x = CX + w_next / 2.0f; float nbr_y = CY + h_next / 2.0f;
-        float nbl_x = CX - w_next / 2.0f; float nbl_y = CY + h_next / 2.0f;
-
-        // 탐색 대상 격자 셀 좌표
-        int cx = px + d * fx;
-        int cy = py + d * fy;
-
-        // 1. 현재 칸이 벽(WALL)인 경우 (예외적 상황 처리 및 1인칭 정면 차단)
-        if (map.getTile(cx, cy) == TileType::WALL) {
-            // 정면 전체 벽 사각형을 드로우하고 그 뒤는 시야 단절 처리
-            drawLine(window, tl_x, tl_y, tr_x, tr_y, lineColor);
-            drawLine(window, tr_x, tr_y, br_x, br_y, lineColor);
-            drawLine(window, br_x, br_y, bl_x, bl_y, lineColor);
-            drawLine(window, bl_x, bl_y, tl_x, tl_y, lineColor);
-            break;
-        }
-
-        // 2. 현재 칸이 비어있다면, 좌/우측 셀이 벽인지 판단하여 원근 사선 드로우
-        int lx = cx - rx;
-        int ly = cy - ry;
-        if (map.getTile(lx, ly) == TileType::WALL) {
-            // 좌측 벽면 원근 라인 그리기
-            drawLine(window, tl_x, tl_y, ntl_x, ntl_y, lineColor); // 천장선
-            drawLine(window, bl_x, bl_y, nbl_x, nbl_y, lineColor); // 바닥선
-            drawLine(window, tl_x, tl_y, bl_x, bl_y, lineColor);   // 수직 앞선
-            drawLine(window, ntl_x, ntl_y, nbl_x, nbl_y, lineColor); // 수직 뒷선
-        } else {
-            // 좌측이 뚫린 복도라면, 천장과 바닥에 가로 라인을 그어 복도의 분기를 표현
-            // 단, 복고풍 룩을 위해 불필요한 중복 선은 최소화
-        }
-
-        int rx_c = cx + rx;
-        int ry_c = cy + ry;
-        if (map.getTile(rx_c, ry_c) == TileType::WALL) {
-            // 우측 벽면 원근 라인 그리기
-            drawLine(window, tr_x, tr_y, ntr_x, ntr_y, lineColor);
-            drawLine(window, br_x, br_y, nbr_x, nbr_y, lineColor);
-            drawLine(window, tr_x, tr_y, br_x, br_y, lineColor);
-            drawLine(window, ntr_x, ntr_y, nbr_x, nbr_y, lineColor);
-        }
-
-        // 3. 바로 한 칸 앞(d+1)의 격자가 벽인 경우
-        int nfx = cx + fx;
-        int nfy = cy + fy;
-        if (map.getTile(nfx, nfy) == TileType::WALL) {
-            // 깊이 d+1에 정면 벽면 사각형을 드로우하여 전방 막힘 연출
-            drawLine(window, ntl_x, ntl_y, ntr_x, ntr_y, lineColor);
-            drawLine(window, ntr_x, ntr_y, nbr_x, nbr_y, lineColor);
-            drawLine(window, nbr_x, nbr_y, nbl_x, nbl_y, lineColor);
-            drawLine(window, nbl_x, nbl_y, ntl_x, ntl_y, lineColor);
-            // 시야가 전방 벽에 막혔으므로 더 멀리 있는 깊이 d+2 등은 그리지 않음
-            break;
-        } else {
-            // 앞칸이 통로이고 좌우가 벽이라면 복도가 계속 이어짐을 표현하기 위해 가로선(천장/바닥)은 긋지 않고
-            // 천장과 바닥의 세로 복도선(원근선)만 뻗어가도록 비워둠
-        }
+    // 6. 전체 지도 오버레이 (M키 또는 미니맵 클릭)
+    if (outUi.fullMapOpen) {
+        drawFullMapOverlay(window, map, party, floorNumber, objects, outUi.fullMapGridRect);
+    } else {
+        outUi.fullMapGridRect = {};
     }
 }
 
-void DungeonRenderer::drawMiniMap(sf::RenderWindow& window, const DungeonMap& map, const Party& party,
-                                  int floorNumber, const std::vector<WorldObject>& objects) {
-    float startX = 750.0f;
-    float startY = 40.0f;
-    float cellSize = 12.0f; // 12x12 크기 격자
+void DungeonRenderer::drawMiniMap(sf::RenderTarget& window, sf::FloatRect frameRect,
+                                  const DungeonMap& map, const Party& party, int floorNumber,
+                                  const std::vector<WorldObject>& objects) {
+    auto& assets = m_game.getAssets();
+    const auto& font = m_game.getFont();
+    UiSystem::drawPanel(window, assets, frameRect, false, 226);
 
-    // 미니맵 배경 드로우
-    sf::RectangleShape bg(sf::Vector2f(240.0f, 240.0f));
-    bg.setPosition(startX, startY);
-    bg.setFillColor(sf::Color(2, 6, 2));
-    bg.setOutlineThickness(1.0f);
-    bg.setOutlineColor(sf::Color(17, 68, 17));
-    window.draw(bg);
+    const float cell = 9.5f;
+    const float gx = frameRect.left + (frameRect.width - cell * DungeonMap::MAP_WIDTH) * 0.5f;
+    const float gy = frameRect.top + 14.0f;
 
-    // 20x20 격자 순회
+    sf::RectangleShape mapBg({cell * DungeonMap::MAP_WIDTH, cell * DungeonMap::MAP_HEIGHT});
+    mapBg.setPosition(gx, gy);
+    mapBg.setFillColor(sf::Color(8, 9, 13, 240));
+    window.draw(mapBg);
+
     for (int y = 0; y < DungeonMap::MAP_HEIGHT; ++y) {
         for (int x = 0; x < DungeonMap::MAP_WIDTH; ++x) {
-            if (!map.isVisited(x, y)) {
-                // 탐험되지 않은 지역은 완전 암전
-                continue;
-            }
-
-            float cx = startX + x * cellSize;
-            float cy = startY + y * cellSize;
-
-            TileType tile = map.getTile(x, y);
-
-            if (tile == TileType::WALL) {
-                // [v0.6.0] 밝혀진 벽: 회색 사각형
-                sf::RectangleShape wallRect(sf::Vector2f(cellSize - 2.0f, cellSize - 2.0f));
-                wallRect.setPosition(cx + 1.0f, cy + 1.0f);
-                wallRect.setFillColor(sf::Color(100, 100, 100)); // 회색 벽면 채우기
-                window.draw(wallRect);
-            } else if (tile == TileType::UPSTAIRS || tile == TileType::DOWNSTAIRS) {
-                // 입구 계단: 노란색/주황색 계열 사각형
-                sf::RectangleShape stairRect(sf::Vector2f(cellSize - 2.0f, cellSize - 2.0f));
-                stairRect.setPosition(cx + 1.0f, cy + 1.0f);
-                stairRect.setFillColor(tile == TileType::UPSTAIRS
-                    ? sf::Color(255, 176, 0) : sf::Color(255, 255, 102));
-                window.draw(stairRect);
+            if (!map.isVisited(x, y)) continue;
+            sf::RectangleShape tile({cell - 1.0f, cell - 1.0f});
+            tile.setPosition(gx + x * cell + 0.5f, gy + y * cell + 0.5f);
+            const TileType tt = map.getTile(x, y);
+            if (tt == TileType::WALL || tt == TileType::SECRET_WALL) {
+                tile.setFillColor(sf::Color(96, 90, 82));
+            } else if (tt == TileType::LOCKED_GATE) {
+                tile.setFillColor(sf::Color(210, 86, 52));
+            } else if (tt == TileType::UPSTAIRS) {
+                tile.setFillColor(sf::Color(240, 186, 72));
+            } else if (tt == TileType::DOWNSTAIRS || tt == TileType::BOSS_GATE) {
+                tile.setFillColor(tt == TileType::BOSS_GATE ? sf::Color(235, 58, 48) : sf::Color(112, 232, 138));
+            } else if (map.isStepped(x, y)) {
+                tile.setFillColor(sf::Color(68, 128, 112));
             } else {
-                // [v0.6.0] 바닥 (EMPTY, DOOR 등)
-                sf::RectangleShape floorRect(sf::Vector2f(cellSize - 2.0f, cellSize - 2.0f));
-                floorRect.setPosition(cx + 1.0f, cy + 1.0f);
-                
-                if (map.isStepped(x, y)) {
-                    // 직접 지나간 곳: 밝은 네온 그린
-                    floorRect.setFillColor(sf::Color(51, 255, 51));
-                } else {
-                    // 안개만 걷히고 가보지는 않은 곳: 어두운 녹색
-                    floorRect.setFillColor(sf::Color(10, 50, 10));
-                }
-                window.draw(floorRect);
+                tile.setFillColor(sf::Color(32, 54, 52));
             }
+            window.draw(tile);
         }
     }
 
-    for (const auto& object : objects) {
-        if (object.floor != floorNumber || object.state != WorldObjectState::DISCOVERED ||
-            !party.hasQuest(object.questId) || !map.isVisited(object.x, object.y)) continue;
-        const float cx = startX + object.x * cellSize + cellSize / 2.0f;
-        const float cy = startY + object.y * cellSize + cellSize / 2.0f;
-        if (object.kind == WorldObjectKind::QUEST_ITEM) {
-            sf::ConvexShape marker(4);
-            marker.setPoint(0, {0.0f, -4.0f}); marker.setPoint(1, {4.0f, 0.0f});
-            marker.setPoint(2, {0.0f, 4.0f}); marker.setPoint(3, {-4.0f, 0.0f});
-            marker.setFillColor(sf::Color(255, 176, 0));
-            marker.setPosition(cx, cy);
-            window.draw(marker);
-        } else if (object.kind == WorldObjectKind::NPC) {
-            sf::RectangleShape marker({7.0f, 7.0f});
-            marker.setOrigin(3.5f, 3.5f);
-            marker.setPosition(cx, cy);
-            marker.setFillColor(sf::Color::Transparent);
-            marker.setOutlineColor(sf::Color(102, 255, 255));
-            marker.setOutlineThickness(2.0f);
-            window.draw(marker);
+    const bool hasRogue = party.hasClassInParty(CharacterClass::ROGUE);
+    for (const auto& o : objects) {
+        if (o.floor != floorNumber || o.state == WorldObjectState::RESOLVED) continue;
+        if (!map.isVisited(o.x, o.y)) continue;
+        if (o.kind == WorldObjectKind::TRAP && !hasRogue && o.state == WorldObjectState::PRESENT) continue;
+        if ((o.kind == WorldObjectKind::QUEST_ITEM || o.kind == WorldObjectKind::NPC) &&
+            !party.hasQuest(o.questId)) continue;
+
+        sf::CircleShape dot(3.2f);
+        dot.setOrigin(3.2f, 3.2f);
+        dot.setPosition(gx + o.x * cell + cell * 0.5f, gy + o.y * cell + cell * 0.5f);
+        switch (o.kind) {
+            case WorldObjectKind::CHEST:       dot.setFillColor(sf::Color(246, 198, 72)); break;
+            case WorldObjectKind::SANCTUARY:   dot.setFillColor(sf::Color(255, 134, 48)); break;
+            case WorldObjectKind::LEVER:       dot.setFillColor(sf::Color(168, 212, 255)); break;
+            case WorldObjectKind::TRAP:        dot.setFillColor(sf::Color(255, 76, 58)); break;
+            case WorldObjectKind::QUEST_BOSS:  dot.setFillColor(sf::Color(255, 54, 88)); break;
+            case WorldObjectKind::NPC:         dot.setFillColor(sf::Color(92, 240, 255)); break;
+            case WorldObjectKind::QUEST_ITEM:  dot.setFillColor(sf::Color(255, 224, 96)); break;
+            case WorldObjectKind::LORE_PLAQUE: dot.setFillColor(sf::Color(172, 146, 255)); break;
+        }
+        window.draw(dot);
+    }
+
+    // 플레이어 방향 삼각형
+    sf::ConvexShape tri(3);
+    tri.setPoint(0, {0.0f, -4.5f});
+    tri.setPoint(1, {3.8f, 3.8f});
+    tri.setPoint(2, {-3.8f, 3.8f});
+    tri.setFillColor(UiTheme::cyanAccent());
+    tri.setOutlineThickness(1.0f);
+    tri.setOutlineColor(sf::Color(8, 12, 16));
+    tri.setPosition(gx + map.getPlayerX() * cell + cell * 0.5f,
+                    gy + map.getPlayerY() * cell + cell * 0.5f);
+    switch (map.getPlayerDir()) {
+        case Direction::NORTH: tri.setRotation(0.0f); break;
+        case Direction::EAST:  tri.setRotation(90.0f); break;
+        case Direction::SOUTH: tri.setRotation(180.0f); break;
+        case Direction::WEST:  tri.setRotation(270.0f); break;
+    }
+    window.draw(tri);
+
+    UiSystem::drawCenteredText(window, font,
+                               LocalizationManager::getInstance().get("HUD_MINIMAP_HINT"),
+                               {frameRect.left, frameRect.top + frameRect.height - 24.0f, frameRect.width, 20.0f},
+                               11, UiTheme::textMuted(), false);
+}
+
+void DungeonRenderer::drawFullMapOverlay(sf::RenderTarget& window, const DungeonMap& map,
+                                         const Party& party, int floorNumber,
+                                         const std::vector<WorldObject>& objects,
+                                         sf::FloatRect& outGridRect) {
+    auto& assets = m_game.getAssets();
+    const auto& font = m_game.getFont();
+    const auto& lm = LocalizationManager::getInstance();
+
+    sf::RectangleShape dim({Game::LOGICAL_WIDTH, Game::LOGICAL_HEIGHT});
+    dim.setFillColor(sf::Color(4, 4, 8, 185));
+    window.draw(dim);
+
+    const sf::FloatRect panel(290.0f, 34.0f, 700.0f, 650.0f);
+    UiSystem::drawPanel(window, assets, panel, true, 248);
+    UiSystem::drawCenteredText(window, font,
+                               lm.format("DUNGEON_FLOOR_LABEL", {{"floor", std::to_string(floorNumber)}}) +
+                                   " — " + lm.get("BIOME_" + std::to_string(floorNumber) + "_NAME"),
+                               {panel.left, panel.top + 12.0f, panel.width, 32.0f}, 20, UiTheme::textGold(), true);
+
+    const float cell = 26.0f;
+    const float gx = panel.left + (panel.width - cell * DungeonMap::MAP_WIDTH) * 0.5f;
+    const float gy = panel.top + 54.0f;
+    outGridRect = {gx, gy, cell * DungeonMap::MAP_WIDTH, cell * DungeonMap::MAP_HEIGHT};
+
+    sf::RectangleShape bg({outGridRect.width, outGridRect.height});
+    bg.setPosition(gx, gy);
+    bg.setFillColor(sf::Color(10, 11, 16));
+    bg.setOutlineThickness(2.0f);
+    bg.setOutlineColor(UiTheme::borderBronze());
+    window.draw(bg);
+
+    for (int y = 0; y < DungeonMap::MAP_HEIGHT; ++y) {
+        for (int x = 0; x < DungeonMap::MAP_WIDTH; ++x) {
+            if (!map.isVisited(x, y)) continue;
+            sf::RectangleShape r({cell - 2.0f, cell - 2.0f});
+            r.setPosition(gx + x * cell + 1.0f, gy + y * cell + 1.0f);
+            const TileType tt = map.getTile(x, y);
+            if (tt == TileType::WALL || tt == TileType::SECRET_WALL) r.setFillColor(sf::Color(86, 80, 74));
+            else if (tt == TileType::LOCKED_GATE) r.setFillColor(sf::Color(210, 86, 52));
+            else if (tt == TileType::UPSTAIRS) r.setFillColor(sf::Color(240, 186, 72));
+            else if (tt == TileType::DOWNSTAIRS) r.setFillColor(sf::Color(108, 224, 134));
+            else if (tt == TileType::BOSS_GATE) r.setFillColor(sf::Color(235, 58, 48));
+            else if (map.isStepped(x, y)) r.setFillColor(sf::Color(62, 118, 102));
+            else r.setFillColor(sf::Color(28, 48, 46));
+            window.draw(r);
+        }
+    }
+
+    const bool hasRogue = party.hasClassInParty(CharacterClass::ROGUE);
+    for (const auto& o : objects) {
+        if (o.floor != floorNumber || o.state == WorldObjectState::RESOLVED || !map.isVisited(o.x, o.y)) continue;
+        if (o.kind == WorldObjectKind::TRAP && !hasRogue && o.state == WorldObjectState::PRESENT) continue;
+        if ((o.kind == WorldObjectKind::QUEST_ITEM || o.kind == WorldObjectKind::NPC) &&
+            !party.hasQuest(o.questId)) continue;
+        const char* sym = "?";
+        sf::Color col = UiTheme::textGold();
+        switch (o.kind) {
+            case WorldObjectKind::CHEST:       sym = "C"; col = sf::Color(255, 206, 78); break;
+            case WorldObjectKind::SANCTUARY:   sym = "S"; col = sf::Color(255, 140, 52); break;
+            case WorldObjectKind::LEVER:       sym = "L"; col = sf::Color(152, 212, 255); break;
+            case WorldObjectKind::TRAP:        sym = "!"; col = sf::Color(255, 76, 58); break;
+            case WorldObjectKind::QUEST_BOSS:  sym = "B"; col = sf::Color(255, 62, 92); break;
+            case WorldObjectKind::NPC:         sym = "N"; col = sf::Color(92, 240, 255); break;
+            case WorldObjectKind::QUEST_ITEM:  sym = "Q"; col = sf::Color(255, 228, 102); break;
+            case WorldObjectKind::LORE_PLAQUE: sym = "I"; col = sf::Color(186, 152, 255); break;
+        }
+        UiSystem::drawCenteredText(window, font, sym,
+                                   {gx + o.x * cell, gy + o.y * cell, cell, cell}, 13, col, true);
+    }
+
+    sf::ConvexShape tri(3);
+    tri.setPoint(0, {0.0f, -8.0f});
+    tri.setPoint(1, {7.0f, 7.0f});
+    tri.setPoint(2, {-7.0f, 7.0f});
+    tri.setFillColor(UiTheme::cyanAccent());
+    tri.setPosition(gx + map.getPlayerX() * cell + cell * 0.5f,
+                    gy + map.getPlayerY() * cell + cell * 0.5f);
+    switch (map.getPlayerDir()) {
+        case Direction::NORTH: tri.setRotation(0.0f); break;
+        case Direction::EAST:  tri.setRotation(90.0f); break;
+        case Direction::SOUTH: tri.setRotation(180.0f); break;
+        case Direction::WEST:  tri.setRotation(270.0f); break;
+    }
+    window.draw(tri);
+
+    UiSystem::drawCenteredText(window, font, lm.get("HUD_FULLMAP_LEGEND"),
+                               {panel.left + 16.0f, panel.top + panel.height - 54.0f, panel.width - 32.0f, 42.0f},
+                               13, UiTheme::textMuted(), false);
+}
+
+void DungeonRenderer::drawPartyDock(sf::RenderTarget& window, const PartyHudSnapshot& snapshot,
+                                    DungeonHudInteraction& ui) {
+    auto& assets = m_game.getAssets();
+    const auto& font = m_game.getFont();
+    const auto& lm = LocalizationManager::getInstance();
+
+    // 하단 독 배경 바
+    sf::RectangleShape bar({Game::LOGICAL_WIDTH, 134.0f});
+    bar.setPosition(0.0f, 586.0f);
+    bar.setFillColor(sf::Color(11, 12, 18, 245));
+    window.draw(bar);
+
+    sf::RectangleShape topLine({Game::LOGICAL_WIDTH, 2.0f});
+    topLine.setPosition(0.0f, 586.0f);
+    topLine.setFillColor(UiTheme::borderBronze());
+    window.draw(topLine);
+
+    const auto& slots = snapshot.slots();
+    const float cardW = 248.0f;
+    const float cardH = 112.0f;
+    const float gap = 10.0f;
+    const float startX = 14.0f;
+    const float cardY = 597.0f;
+
+    for (std::size_t i = 0; i < 4; ++i) {
+        const sf::FloatRect r(startX + static_cast<float>(i) * (cardW + gap), cardY, cardW, cardH);
+        ui.portraitRects[i] = r;
+        if (i < slots.size()) {
+            const bool hov = r.contains(ui.mousePos);
+            UiSystem::drawPortraitCard(window, assets, font, slots[i], r, false, hov, false);
         } else {
-            sf::RectangleShape horizontal({9.0f, 3.0f});
-            sf::RectangleShape vertical({3.0f, 9.0f});
-            horizontal.setOrigin(4.5f, 1.5f); vertical.setOrigin(1.5f, 4.5f);
-            horizontal.setPosition(cx, cy); vertical.setPosition(cx, cy);
-            horizontal.setFillColor(sf::Color(255, 51, 51));
-            vertical.setFillColor(sf::Color(255, 51, 51));
-            window.draw(horizontal); window.draw(vertical);
+            UiSystem::drawPanel(window, assets, r, false, 150);
+            UiSystem::drawCenteredText(window, font, lm.get("HUD_EMPTY_SLOT"), r, 13, UiTheme::textMuted(), false);
         }
     }
 
-    sf::Text floorLabel;
-    floorLabel.setFont(m_game.getFont());
-    floorLabel.setCharacterSize(LocalizationManager::getInstance().getScaledTextSize(14));
-    floorLabel.setFillColor(sf::Color(255, 176, 0));
-    std::string label = LocalizationManager::getInstance().format(
-        "DUNGEON_FLOOR_LABEL", {{"floor", std::to_string(floorNumber)}});
-    if (LocalizationManager::getInstance().getTextScale() <= 125) {
-        const TileType currentTile = map.getTile(map.getPlayerX(), map.getPlayerY());
-        bool canInteract = currentTile == TileType::UPSTAIRS || currentTile == TileType::DOWNSTAIRS;
-        for (const auto& object : objects) {
-            if (object.floor == floorNumber && object.x == map.getPlayerX() &&
-                object.y == map.getPlayerY() && object.state != WorldObjectState::RESOLVED &&
-                object.kind != WorldObjectKind::QUEST_BOSS && party.hasQuest(object.questId)) {
-                canInteract = true;
-            }
-        }
-        if (canInteract) label += " | " + LocalizationManager::getInstance().get("DUNGEON_INTERACT_PROMPT");
-    }
-    floorLabel.setString(sf::String::fromUtf8(label.begin(), label.end()));
-    floorLabel.setPosition(startX, 285.0f);
-    window.draw(floorLabel);
+    // 우측 퀵 액션 독 (5 버튼: 파티/퀘스트/도감/지도/설정)
+    const float dockX = 1046.0f;
+    const float dockW = 220.0f;
+    const std::array<std::pair<std::string, std::string>, 5> dockItems = {{
+        {lm.get("HUD_BTN_PARTY"), "C"},
+        {lm.get("HUD_BTN_QUESTS"), "J"},
+        {lm.get("HUD_BTN_BESTIARY"), "B"},
+        {lm.get("HUD_BTN_MAP"), "M"},
+        {lm.get("HUD_BTN_SETTINGS"), "O"}
+    }};
 
-    // 플레이어 마커 그리기
-    int px = map.getPlayerX();
-    int py = map.getPlayerY();
-    Direction pdir = map.getPlayerDir();
-
-    float pMux = startX + px * cellSize + cellSize / 2.0f;
-    float pMuy = startY + py * cellSize + cellSize / 2.0f;
-
-    sf::ConvexShape playerMarker(3);
-    playerMarker.setPoint(0, sf::Vector2f(0.0f, -5.0f));
-    playerMarker.setPoint(1, sf::Vector2f(4.5f, 4.5f));
-    playerMarker.setPoint(2, sf::Vector2f(-4.5f, 4.5f));
-    playerMarker.setFillColor(sf::Color(102, 255, 255));
-    playerMarker.setOutlineColor(sf::Color(2, 6, 2));
-    playerMarker.setOutlineThickness(1.0f);
-    playerMarker.setPosition(pMux, pMuy);
-
-    switch (pdir) {
-        case Direction::NORTH: playerMarker.setRotation(0.0f); break;
-        case Direction::EAST: playerMarker.setRotation(90.0f); break;
-        case Direction::SOUTH: playerMarker.setRotation(180.0f); break;
-        case Direction::WEST: playerMarker.setRotation(270.0f); break;
-    }
-
-    window.draw(playerMarker);
-}
-
-void DungeonRenderer::drawHUDFrame(sf::RenderWindow& window, const PartyHudSnapshot& partySnapshot) {
-    sf::Color neonColor = sf::Color(51, 255, 51);
-    sf::Color mutedColor = sf::Color(17, 68, 17);
-
-    // 1. 3D 뷰포트 테두리선 (700x500, 마진 20)
-    sf::RectangleShape viewportFrame(sf::Vector2f(VIEWPORT_W, VIEWPORT_H));
-    viewportFrame.setPosition(VIEWPORT_X, VIEWPORT_Y);
-    viewportFrame.setFillColor(sf::Color::Transparent);
-    viewportFrame.setOutlineThickness(2.0f);
-    viewportFrame.setOutlineColor(neonColor);
-    window.draw(viewportFrame);
-
-    // 2. 하단 로그창 테두리선 (700x208, 마진 X:20, Y:540)
-    sf::RectangleShape logFrame(sf::Vector2f(700.0f, 208.0f));
-    logFrame.setPosition(20.0f, 540.0f);
-    logFrame.setFillColor(sf::Color::Transparent);
-    logFrame.setOutlineThickness(1.5f);
-    logFrame.setOutlineColor(neonColor);
-    window.draw(logFrame);
-
-    // 3. 우측 미니맵 영역 프레임 헤더 테두리
-    sf::RectangleShape minimapFrame(sf::Vector2f(264.0f, 280.0f));
-    minimapFrame.setPosition(740.0f, 20.0f);
-    minimapFrame.setFillColor(sf::Color::Transparent);
-    minimapFrame.setOutlineThickness(1.5f);
-    minimapFrame.setOutlineColor(mutedColor);
-    window.draw(minimapFrame);
-
-    // 4. 우측 하단 파티 상태 프레임 테두리
-    sf::RectangleShape partyFrame(sf::Vector2f(264.0f, 408.0f));
-    partyFrame.setPosition(740.0f, 340.0f);
-    partyFrame.setFillColor(sf::Color::Transparent);
-    partyFrame.setOutlineThickness(1.5f);
-    partyFrame.setOutlineColor(neonColor);
-    window.draw(partyFrame);
-
-    // 파티 상태 헤더 텍스트 드로우
-    sf::Text partyHeader;
-    partyHeader.setFont(m_game.getFont());
-    partyHeader.setString(LocalizationManager::getInstance().getSf("HUD_PARTY_STATUS"));
-    partyHeader.setCharacterSize(LocalizationManager::getInstance().getScaledTextSize(14));
-    partyHeader.setFillColor(neonColor);
-    partyHeader.setPosition(760.0f, 355.0f);
-    window.draw(partyHeader);
-
-    std::string partyLines;
-    const bool largeText = LocalizationManager::getInstance().getTextScale() > 125;
-    for (const auto& slot : partySnapshot.slots()) {
-        std::string className;
-        switch (slot.characterClass) {
-            case CharacterClass::WARRIOR: className = "CLASS_WARRIOR"; break;
-            case CharacterClass::MAGE: className = "CLASS_MAGE"; break;
-            case CharacterClass::ROGUE: className = "CLASS_ROGUE"; break;
-            case CharacterClass::CLERIC: className = "CLASS_CLERIC"; break;
-        }
-        partyLines += std::to_string(slot.slotNumber) + ". " + slot.name;
-        if (!largeText) {
-            partyLines += " [" + LocalizationManager::getInstance().get(className) + "]";
-        }
-        partyLines += "\n";
-        auto& localization = LocalizationManager::getInstance();
-        partyLines += "   " + localization.get("COMBAT_HP_SHORT") + " " +
-                      std::to_string(slot.hp) + "/" + std::to_string(slot.maxHp);
-        if (slot.isDead) partyLines += " " + localization.get(largeText ? "STATUS_DEAD_SHORT" : "STATUS_DEAD");
-        if (slot.poisonTurns > 0) partyLines += " " + localization.get(largeText ? "STATUS_POISON_SHORT" : "STATUS_POISON") + ":" + std::to_string(slot.poisonTurns);
-        if (slot.paralysisTurns > 0) partyLines += " " + localization.get(largeText ? "STATUS_PARALYSIS_SHORT" : "STATUS_PARALYSIS") + ":" + std::to_string(slot.paralysisTurns);
-        if (slot.blessTurns > 0) partyLines += " " + localization.get(largeText ? "STATUS_BLESS_SHORT" : "STATUS_BLESS") + ":" + std::to_string(slot.blessTurns);
-        partyLines += "\n";
-    }
-    if (partyLines.empty()) {
-        partyLines = LocalizationManager::getInstance().get("HUD_PARTY_EMPTY");
-    }
-
-    sf::Text membersText;
-    membersText.setFont(m_game.getFont());
-    membersText.setString(sf::String::fromUtf8(partyLines.begin(), partyLines.end()));
-    membersText.setCharacterSize(LocalizationManager::getInstance().getScaledTextSize(14));
-    membersText.setFillColor(sf::Color(180, 255, 180));
-    membersText.setPosition(760.0f, 390.0f);
-    window.draw(membersText);
-}
-
-void DungeonRenderer::drawLogWindow(sf::RenderWindow& window, const std::vector<std::string>& logQueue) {
-    const sf::Font& font = m_game.getFont();
-    float startX = 40.0f;
-    float startY = 555.0f;
-    float lineSpacing = 24.0f;
-
-    // 최대 7개까지의 최근 로그 출력
-    size_t logCount = logQueue.size();
-    size_t startIdx = (logCount > 7) ? (logCount - 7) : 0;
-
-    for (size_t i = startIdx; i < logCount; ++i) {
-        sf::Text logText;
-        logText.setFont(font);
-        // [v0.5.0] std::string(UTF-8)을 직접 setString에 넘길 시 깨지는 SFML 한글 글리프 인코딩 오류 수정
-        std::string logStr = logQueue[i];
-        logText.setString(sf::String::fromUtf8(logStr.begin(), logStr.end()));
-        logText.setCharacterSize(LocalizationManager::getInstance().getScaledTextSize(14));
-
-        // 특별 로그 접두사 색상 변화 처리
-        const auto& localization = LocalizationManager::getInstance();
-        const std::string wallPrefix = "> " + localization.get("DUNGEON_WALL_BLOCKED");
-        const std::string stairsPrefix = "> " + localization.get("MSG_DUNGEON_ESC");
-        if (logQueue[i].rfind(wallPrefix, 0) == 0) {
-            logText.setFillColor(sf::Color(255, 51, 51)); // 적색 (충돌 경고)
-        } else if (logQueue[i].rfind(stairsPrefix, 0) == 0) {
-            logText.setFillColor(sf::Color(255, 176, 0)); // 주황색 (특이 타일 안내)
+    // 2열 3행 그리드 (마지막 버튼은 전체폭)
+    for (std::size_t i = 0; i < 5; ++i) {
+        sf::FloatRect r;
+        if (i < 4) {
+            const float col = static_cast<float>(i % 2);
+            const float row = static_cast<float>(i / 2);
+            r = {dockX + col * 112.0f, cardY + row * 38.0f, 108.0f, 34.0f};
         } else {
-            logText.setFillColor(sf::Color(51, 255, 51)); // 일반 녹색
+            r = {dockX, cardY + 76.0f, dockW, 34.0f};
         }
-
-        logText.setPosition(startX, startY + (i - startIdx) * lineSpacing);
-        window.draw(logText);
+        ui.dockRects[i] = r;
+        UiSystem::drawButton(window, assets, font, {
+            r, dockItems[i].first, dockItems[i].second, false, r.contains(ui.mousePos), true, false
+        });
     }
 }
 
-void DungeonRenderer::drawLine(sf::RenderWindow& window, float x1, float y1, float x2, float y2, sf::Color color) {
-    sf::Vertex line[] = {
-        sf::Vertex(sf::Vector2f(x1, y1), color),
-        sf::Vertex(sf::Vector2f(x2, y2), color)
-    };
-    window.draw(line, 2, sf::Lines);
+void DungeonRenderer::drawExplorationLog(sf::RenderTarget& window, sf::FloatRect rect,
+                                         const std::vector<std::string>& logQueue) {
+    auto& assets = m_game.getAssets();
+    const auto& font = m_game.getFont();
+    UiSystem::drawPanel(window, assets, rect, false, 212);
+
+    const float pad = 10.0f;
+    float y = rect.top + pad;
+    const int maxShow = 6;
+    const int startIdx = std::max(0, static_cast<int>(logQueue.size()) - maxShow);
+    for (int i = startIdx; i < static_cast<int>(logQueue.size()); ++i) {
+        const auto lines = UiSystem::wrapUtf8Lines(logQueue[static_cast<std::size_t>(i)], font, 12,
+                                                   rect.width - pad * 2.0f);
+        for (const auto& line : lines) {
+            if (y + 15.0f > rect.top + rect.height - 6.0f) return;
+            const bool latest = (i == static_cast<int>(logQueue.size()) - 1);
+            UiSystem::drawText(window, font, line, {rect.left + pad, y}, 12,
+                               latest ? UiTheme::textPrimary() : UiTheme::textMuted(), false);
+            y += 15.5f;
+        }
+    }
 }
 
 } // namespace crawl

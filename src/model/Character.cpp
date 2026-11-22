@@ -1,56 +1,89 @@
-// [v0.3.0] Character.cpp 신규 작성
-// [v0.8.0] 상태이상(독, 마비), 전투 임시 버프(STR/DEX, 축복), 지팡이 지능 보너스 및 SkillFactory 연계 습득 스킬 자동 초기화 탑재.
-// 4d6 Drop-Lowest 능력치 롤러, D&D 5e 중갑/경갑 AC 방어구 규정 적용, 레벨업 최대 HP 성장 및 JSON 영속화를 구현한다.
-
 #include "model/Character.hpp"
-#include "model/ItemFactory.hpp"
-#include "model/SkillFactory.hpp"
-#include "model/CharacterIdentityRules.hpp"
-#include "core/SessionRng.hpp"
 #include "core/LocalizationManager.hpp"
+#include "core/SessionRng.hpp"
+#include "model/CharacterIdentityRules.hpp"
+#include "model/ItemFactory.hpp"
+#include "model/Skill.hpp"
+#include "model/SkillFactory.hpp"
+
 #include <algorithm>
-#include <iostream>
+#include <array>
 #include <stdexcept>
 
 namespace crawl {
+namespace {
+
+int hitDieForClass(CharacterClass c) {
+    switch (c) {
+        case CharacterClass::WARRIOR: return 10;
+        case CharacterClass::CLERIC:  return 8;
+        case CharacterClass::ROGUE:   return 8;
+        case CharacterClass::MAGE:    return 6;
+    }
+    return 8;
+}
+
+bool isTwoHandedWeaponId(const std::string& id) {
+    return id == "wpn_greatsword" || id == "wpn_halberd" || id == "wpn_longbow" ||
+           id == "wpn_stormbow" || id == "wpn_dragonbane" || id == "wpn_obsidian_axe";
+}
+
+bool isHeavyArmorId(const std::string& id) {
+    return id == "arm_chain" || id == "arm_plate" || id == "arm_obsidian_plate" ||
+           id == "arm_dragonscale";
+}
+
+} // namespace
 
 Character::Character(std::string name, CharacterClass charClass)
-    : Character(CharacterIdentity{std::move(name), 0, Gender::UNSPECIFIED, charClass}, true) {}
+    : m_name(std::move(name)), m_class(charClass) {
+    m_row = (charClass == CharacterClass::MAGE || charClass == CharacterClass::ROGUE)
+                ? CombatRow::BACK
+                : CombatRow::FRONT;
+    rollAbilities();
+    initBaseStats();
+}
 
 Character::Character(CharacterIdentity identity, AbilityScore abilities)
-    : Character(std::move(identity), false) {
-    m_abilities = abilities;
-    initializeLevelOneState();
+    : m_name(std::move(identity.name)),
+      m_age(identity.age),
+      m_gender(identity.gender),
+      m_class(identity.characterClass),
+      m_abilities(abilities) {
+    m_row = (m_class == CharacterClass::MAGE || m_class == CharacterClass::ROGUE)
+                ? CombatRow::BACK
+                : CombatRow::FRONT;
+    initBaseStats();
 }
 
-Character::Character(CharacterIdentity identity, bool initializeRandomState)
-    : m_name(std::move(identity.name)), m_age(identity.age), m_gender(identity.gender),
-      m_class(identity.characterClass), m_level(1), m_xp(0),
-      m_hp(10), m_maxHp(10), m_spellSlots(0), m_maxSpellSlots(0),
-      m_poisonTurns(0), m_paralysisTurns(0),
-      m_strBuffTurns(0), m_strBuffAmount(0),
-      m_dexBuffTurns(0), m_dexBuffAmount(0),
-      m_blessTurns(0) {
-    if (!initializeRandomState) return;
-    rollAbilities();
-    initializeLevelOneState();
+void Character::rollAbilities() {
+    auto roll4d6DropLowest = []() -> int {
+        std::array<int, 4> rolls{};
+        for (int& r : rolls) r = SessionRng::global().rollDie(6);
+        std::sort(rolls.begin(), rolls.end());
+        return rolls[1] + rolls[2] + rolls[3];
+    };
+
+    m_abilities.strength = roll4d6DropLowest();
+    m_abilities.dexterity = roll4d6DropLowest();
+    m_abilities.constitution = roll4d6DropLowest();
+    m_abilities.intelligence = roll4d6DropLowest();
+    m_abilities.wisdom = roll4d6DropLowest();
+    m_abilities.charisma = roll4d6DropLowest();
 }
 
-void Character::initializeLevelOneState() {
-    int conMod = getAbilities().getModifier(m_abilities.constitution);
-    int hitDie = getHitDieSides();
-    m_maxHp = std::max(4, hitDie + conMod); // 최소 1레벨 HP는 4 이상 보장
+void Character::initBaseStats() {
+    m_baseHpRolls = hitDieForClass(m_class);
+    m_maxHp = computeMaxHp();
     m_hp = m_maxHp;
+    m_maxSpellSlots = computeMaxSpellSlots();
+    m_spellSlots = m_maxSpellSlots;
 
-    if (m_class == CharacterClass::MAGE || m_class == CharacterClass::CLERIC) {
-        m_maxSpellSlots = 2; // 1레벨 주문 슬롯 2개 지급
-        m_spellSlots = m_maxSpellSlots;
-    }
-
-    // 클래스별 D&D 초기 기본 장비 지급 및 자동 장착
+    // 시작 장비 보급
     if (m_class == CharacterClass::WARRIOR) {
         equip(std::dynamic_pointer_cast<Equipment>(ItemFactory::createItem("wpn_longsword")));
         equip(std::dynamic_pointer_cast<Equipment>(ItemFactory::createItem("arm_scale")));
+        equip(std::dynamic_pointer_cast<Equipment>(ItemFactory::createItem("shd_round")));
     } else if (m_class == CharacterClass::MAGE) {
         equip(std::dynamic_pointer_cast<Equipment>(ItemFactory::createItem("wpn_staff")));
         equip(std::dynamic_pointer_cast<Equipment>(ItemFactory::createItem("arm_robe")));
@@ -59,183 +92,237 @@ void Character::initializeLevelOneState() {
         equip(std::dynamic_pointer_cast<Equipment>(ItemFactory::createItem("arm_leather")));
     } else if (m_class == CharacterClass::CLERIC) {
         equip(std::dynamic_pointer_cast<Equipment>(ItemFactory::createItem("wpn_mace")));
-        equip(std::dynamic_pointer_cast<Equipment>(ItemFactory::createItem("arm_chain")));
+        equip(std::dynamic_pointer_cast<Equipment>(ItemFactory::createItem("arm_scale")));
         equip(std::dynamic_pointer_cast<Equipment>(ItemFactory::createItem("shd_round")));
     }
 
     initSkillsForLevel();
 }
 
-void Character::rollAbilities() {
-    auto rollOneStat = [&]() -> int {
-        int rolls[4];
-        for (int i = 0; i < 4; ++i) {
-            rolls[i] = SessionRng::global().rollDie(6);
-        }
-        std::sort(rolls, rolls + 4);
-        // 최저값 rolls[0]을 버리고 상위 3개 합산 (4d6 drop lowest)
-        return rolls[1] + rolls[2] + rolls[3];
-    };
+int Character::computeMaxHp() const {
+    const AbilityScore eff = getAbilities();
+    const int conMod = eff.getModifier(eff.constitution);
+    int hp = std::max(4, m_baseHpRolls + conMod * m_level);
+    hp += getTalentRank(TalentNode::VITALITY) * 6;
+    if (m_specialization == Specialization::VANGUARD) hp += 12;
+    if (m_specialization == Specialization::BERSERKER) hp += 8;
+    if (m_specialization == Specialization::PALADIN) hp += 10;
+    for (const auto& eq : {m_weapon, m_armor, m_shield, m_accessory}) {
+        if (eq) hp += eq->getBonusHp();
+    }
+    return std::max(6, hp);
+}
 
-    m_abilities.strength = rollOneStat();
-    m_abilities.dexterity = rollOneStat();
-    m_abilities.constitution = rollOneStat();
-    m_abilities.intelligence = rollOneStat();
-    m_abilities.wisdom = rollOneStat();
-    m_abilities.charisma = rollOneStat();
+int Character::computeMaxSpellSlots() const {
+    int base = 0;
+    if (m_class == CharacterClass::MAGE || m_class == CharacterClass::CLERIC) {
+        base = 2 + m_level;
+        if (m_specialization == Specialization::ORACLE) base += 2;
+        if (m_specialization == Specialization::CHRONOMANCER) base += 1;
+        base += getTalentRank(TalentNode::APEX) / 2;
+    } else if (m_specialization == Specialization::PALADIN) {
+        base = 2 + m_level / 2;
+    }
+    return base;
+}
+
+void Character::recalculateDerivedMaximums(bool healDelta) {
+    const int oldMax = m_maxHp;
+    m_maxHp = computeMaxHp();
+    if (healDelta && m_maxHp > oldMax && !isDead()) {
+        m_hp = std::min(m_maxHp, m_hp + (m_maxHp - oldMax));
+    } else {
+        m_hp = std::min(m_hp, m_maxHp);
+    }
+
+    const int oldSlots = m_maxSpellSlots;
+    m_maxSpellSlots = computeMaxSpellSlots();
+    if (healDelta && m_maxSpellSlots > oldSlots) {
+        m_spellSlots = std::min(m_maxSpellSlots, m_spellSlots + (m_maxSpellSlots - oldSlots));
+    } else {
+        m_spellSlots = std::min(m_spellSlots, m_maxSpellSlots);
+    }
 }
 
 int Character::getAc() const {
-    // 민첩 버프 수치가 실시간 AC에 영향을 주도록 getAbilities()로 DEX 획득
-    int dexMod = getAbilities().getModifier(getAbilities().dexterity);
-    int baseAc = 10 + dexMod;
+    const AbilityScore eff = getAbilities();
+    int ac = 10 + eff.getModifier(eff.dexterity);
+    if (m_class == CharacterClass::WARRIOR) ac += 1;
+    if (m_specialization == Specialization::VANGUARD) ac += 2;
+    if (m_specialization == Specialization::PALADIN) ac += 1;
+    ac += getTalentRank(TalentNode::TACTICS);
 
-    // 갑옷 장착에 따른 AC 산정 (D&D 5e 공식 구현)
-    if (m_equippedArmor) {
-        std::string armorId = m_equippedArmor->getId();
-        if (armorId == "arm_chain") {
-            // 체인 메일: 민첩 보정치 없는 고정 AC 16
-            baseAc = 16;
-        } else if (armorId == "arm_plate") {
-            // 플레이트 아머: 민첩 보정치 없는 고정 AC 18
-            baseAc = 18;
-        } else if (armorId == "arm_scale") {
-            // 스케일 메일: AC 14 + 민첩 보정치 (최대 +2)
-            baseAc = 14 + std::min(2, dexMod);
-        } else if (armorId == "arm_leather") {
-            // 가죽 갑옷: AC 11 + 민첩 보정치
-            baseAc = 11 + dexMod;
-        } else {
-            // 일반 의복/로브: 기본 AC + 갑옷 보너스 + 민첩 보정
-            baseAc = 10 + dexMod + m_equippedArmor->getAcBonus();
-        }
-    }
-
-    // 방패 추가 AC 보너스 반영
-    if (m_equippedShield) {
-        baseAc += m_equippedShield->getAcBonus();
-    }
-
-    if (m_class == CharacterClass::WARRIOR && m_equippedArmor) {
-        baseAc += 1;
-    }
-
-    return baseAc;
+    if (m_armor) ac += m_armor->getAcBonus();
+    if (m_shield) ac += m_shield->getAcBonus();
+    if (m_accessory) ac += m_accessory->getAcBonus();
+    if (m_weapon) ac += m_weapon->getAffix().bonusAc;
+    if (m_guarding) ac += 3;
+    if (m_wardTurns > 0) ac += 2;
+    if (m_frostTurns > 0) ac -= 1;
+    return ac;
 }
 
 bool Character::canEquip(const Equipment& equipItem) const {
-    const std::string itemId = equipItem.getId();
-    if (m_class == CharacterClass::MAGE &&
-        itemId != "wpn_dagger" && itemId != "wpn_staff" && itemId != "arm_robe") return false;
-    if (m_class == CharacterClass::ROGUE &&
-        itemId != "wpn_dagger" && itemId != "wpn_rapier" && itemId != "arm_leather") return false;
-    if (m_class == CharacterClass::CLERIC &&
-        (itemId == "wpn_greatsword" || itemId == "wpn_staff" || itemId == "wpn_rapier" ||
-         itemId == "arm_plate" || itemId == "shd_tower")) return false;
-    if (m_class == CharacterClass::WARRIOR && (itemId == "wpn_staff" || itemId == "arm_robe")) return false;
+    const std::string id = equipItem.getId();
+    const EquipSlot slot = equipItem.getSlot();
 
-    const int strength = m_abilities.strength;
-    if (itemId == "arm_plate" && strength < 15) return false;
-    if (itemId == "shd_tower" && strength < 14) return false;
-    if (itemId == "wpn_greatsword" && m_equippedShield) return false;
-    if (equipItem.getSlot() == EquipSlot::SHIELD && m_equippedWeapon &&
-        m_equippedWeapon->getId() == "wpn_greatsword") return false;
+    if (slot == EquipSlot::SHIELD) {
+        if (m_class == CharacterClass::MAGE || m_class == CharacterClass::ROGUE) return false;
+        if (m_weapon && isTwoHandedWeaponId(m_weapon->getId())) return false;
+    }
+    if (slot == EquipSlot::ARMOR) {
+        if (m_class == CharacterClass::MAGE && id != "arm_robe" && id != "arm_archmage_robe" &&
+            id != "arm_void_mantle") {
+            return false;
+        }
+        if (m_class == CharacterClass::ROGUE && isHeavyArmorId(id)) return false;
+        if ((id == "arm_plate" || id == "arm_obsidian_plate" || id == "arm_dragonscale") &&
+            getAbilities().strength < 13) {
+            return false;
+        }
+    }
+    if (slot == EquipSlot::WEAPON) {
+        if (m_class == CharacterClass::MAGE &&
+            id != "wpn_dagger" && id != "wpn_staff" && id != "wpn_archmage_staff" &&
+            id != "wpn_frost_wand" && id != "wpn_flame_scepter") {
+            return false;
+        }
+    }
     return true;
 }
 
 bool Character::equip(std::shared_ptr<Equipment> equipItem) {
     if (!equipItem || !canEquip(*equipItem)) return false;
-
-    EquipSlot slot = equipItem->getSlot();
-    switch (slot) {
+    switch (equipItem->getSlot()) {
         case EquipSlot::WEAPON:
-            m_equippedWeapon = equipItem;
+            m_weapon = std::move(equipItem);
+            if (isTwoHandedWeaponId(m_weapon->getId())) m_shield.reset();
             break;
         case EquipSlot::ARMOR:
-            m_equippedArmor = equipItem;
+            m_armor = std::move(equipItem);
             break;
         case EquipSlot::SHIELD:
-            m_equippedShield = equipItem;
+            m_shield = std::move(equipItem);
             break;
-        default:
-            return false;
+        case EquipSlot::ACCESSORY:
+            m_accessory = std::move(equipItem);
+            break;
     }
+    recalculateDerivedMaximums(false);
     return true;
 }
 
 void Character::unequip(EquipSlot slot) {
     switch (slot) {
-        case EquipSlot::WEAPON: m_equippedWeapon = nullptr; break;
-        case EquipSlot::ARMOR:  m_equippedArmor = nullptr;  break;
-        case EquipSlot::SHIELD: m_equippedShield = nullptr; break;
-        default: break;
+        case EquipSlot::WEAPON:    m_weapon.reset(); break;
+        case EquipSlot::ARMOR:     m_armor.reset(); break;
+        case EquipSlot::SHIELD:    m_shield.reset(); break;
+        case EquipSlot::ACCESSORY: m_accessory.reset(); break;
     }
+    recalculateDerivedMaximums(false);
+}
+
+int Character::getNextLevelXp() const {
+    if (m_level >= MAX_LEVEL) return 0;
+    return 100 * m_level * m_level;
 }
 
 bool Character::addXp(int amount) {
-    if (m_level >= 3) return false; // 최대 3레벨 제한
-
+    if (amount <= 0) return false;
     m_xp += amount;
-    int nextXpThreshold = (m_level == 1) ? 300 : 900;
-
-    if (m_xp >= nextXpThreshold) {
-        m_level++;
-        
-        // 레벨업에 따른 HP 상승 (주사위 굴림 + CON 보정치)
-        int conMod = getAbilities().getModifier(m_abilities.constitution);
-        int hpGain = std::max(1, SessionRng::global().rollDie(getHitDieSides()) + conMod);
-        
-        m_maxHp += hpGain;
-        m_hp = m_maxHp; // 레벨업 시 HP 완전 치유
-
-        // 주문 슬롯 획득 증가 처리
-        if (m_class == CharacterClass::MAGE || m_class == CharacterClass::CLERIC) {
-            m_maxSpellSlots += 1;
-            m_spellSlots = m_maxSpellSlots;
+    bool leveledUp = false;
+    while (m_level < MAX_LEVEL && m_xp >= getNextLevelXp()) {
+        ++m_level;
+        ++m_talentPoints;
+        const int die = hitDieForClass(m_class);
+        const int gain = std::max(die / 2 + 1, SessionRng::global().rollDie(die));
+        m_baseHpRolls += gain;
+        // 짝수 레벨마다 주 능력치 +1 자연 성장
+        if (m_level % 2 == 0) {
+            switch (m_class) {
+                case CharacterClass::WARRIOR: m_abilities.strength = std::min(22, m_abilities.strength + 1); break;
+                case CharacterClass::MAGE:    m_abilities.intelligence = std::min(22, m_abilities.intelligence + 1); break;
+                case CharacterClass::ROGUE:   m_abilities.dexterity = std::min(22, m_abilities.dexterity + 1); break;
+                case CharacterClass::CLERIC:  m_abilities.wisdom = std::min(22, m_abilities.wisdom + 1); break;
+            }
         }
-
-        // [v0.8.0] 레벨에 맞춰 새로운 스킬 풀 자동 습득 동기화
+        recalculateDerivedMaximums(true);
+        m_hp = m_maxHp;
+        m_spellSlots = m_maxSpellSlots;
         initSkillsForLevel();
-
-        std::cout << "[LevelUp] " << m_name << " 캐릭터가 " << m_level << " 레벨로 상승했습니다! (HP +" << hpGain << ")" << std::endl;
-        return true;
+        leveledUp = true;
     }
-    return false;
+    return leveledUp;
 }
 
 void Character::rest() {
+    recalculateDerivedMaximums(false);
     m_hp = m_maxHp;
     m_spellSlots = m_maxSpellSlots;
-    m_poisonTurns = 0;
-    m_paralysisTurns = 0;
+    cureAllDebuffs();
     clearCombatBuffs();
 }
 
+void Character::sanctuaryRest() {
+    if (isDead()) return;
+    const int healAmt = std::max(4, static_cast<int>(m_maxHp * 0.60f));
+    heal(healAmt);
+    const int slotGain = std::max(1, m_maxSpellSlots / 2);
+    recoverSpellSlot(slotGain);
+    m_poisonTurns = 0;
+    m_burnTurns = 0;
+    m_bleedTurns = 0;
+    m_frostTurns = 0;
+}
+
 void Character::heal(int amount) {
+    if (isDead() || amount <= 0) return;
     m_hp = std::min(m_maxHp, m_hp + amount);
 }
 
+void Character::revive(int hpAmount) {
+    if (!isDead()) {
+        heal(hpAmount);
+        return;
+    }
+    m_hp = std::clamp(hpAmount, 1, m_maxHp);
+    cureAllDebuffs();
+}
+
 void Character::takeDamage(int damage) {
+    if (damage <= 0) return;
     m_hp = std::max(0, m_hp - damage);
+    if (m_hp == 0) {
+        m_guarding = false;
+        m_tauntTurns = 0;
+    }
 }
 
-bool Character::isDead() const {
-    return m_hp <= 0;
-}
-
+bool Character::isDead() const { return m_hp <= 0; }
 std::string Character::getName() const { return m_name; }
 int Character::getAge() const { return m_age; }
 Gender Character::getGender() const { return m_gender; }
 CharacterClass Character::getClass() const { return m_class; }
 
 std::string Character::getClassString() const {
+    const auto& lm = LocalizationManager::getInstance();
     switch (m_class) {
-        case CharacterClass::WARRIOR: return "전사";
-        case CharacterClass::MAGE:    return "마법사";
-        case CharacterClass::ROGUE:   return "도적";
-        case CharacterClass::CLERIC:  return "성직자";
+        case CharacterClass::WARRIOR: return lm.get("CLASS_WARRIOR");
+        case CharacterClass::MAGE:    return lm.get("CLASS_MAGE");
+        case CharacterClass::ROGUE:   return lm.get("CLASS_ROGUE");
+        case CharacterClass::CLERIC:  return lm.get("CLASS_CLERIC");
     }
-    return "미정";
+    return lm.get("CLASS_WARRIOR");
+}
+
+std::string Character::getClassSlug() const {
+    switch (m_class) {
+        case CharacterClass::WARRIOR: return "warrior";
+        case CharacterClass::MAGE:    return "mage";
+        case CharacterClass::ROGUE:   return "rogue";
+        case CharacterClass::CLERIC:  return "cleric";
+    }
+    return "warrior";
 }
 
 int Character::getLevel() const { return m_level; }
@@ -244,365 +331,353 @@ int Character::getHp() const { return m_hp; }
 int Character::getMaxHp() const { return m_maxHp; }
 int Character::getSpellSlots() const { return m_spellSlots; }
 int Character::getMaxSpellSlots() const { return m_maxSpellSlots; }
-void Character::consumeSpellSlot() { m_spellSlots = std::max(0, m_spellSlots - 1); }
+void Character::consumeSpellSlot() { if (m_spellSlots > 0) --m_spellSlots; }
 void Character::recoverSpellSlot(int amount) {
+    if (amount <= 0) return;
     m_spellSlots = std::min(m_maxSpellSlots, m_spellSlots + amount);
 }
 
-AbilityScore Character::getAbilities() const {
-    AbilityScore copy = m_abilities;
-    // 임시 힘 버프 적용
-    if (m_strBuffTurns > 0) {
-        copy.strength += m_strBuffAmount;
-    }
-    // 임시 민첩 버프 적용
-    if (m_dexBuffTurns > 0) {
-        copy.dexterity += m_dexBuffAmount;
-    }
-    // wpn_staff 장착 시 지능 +1 보너스
-    if (m_equippedWeapon && m_equippedWeapon->getId() == "wpn_staff") {
-        copy.intelligence += 1;
-    }
-    return copy;
-}
+AbilityScore Character::getRawAbilities() const { return m_abilities; }
 
-AbilityScore Character::getRawAbilities() const {
-    return m_abilities;
+AbilityScore Character::getAbilities() const {
+    AbilityScore eff = m_abilities;
+    if (m_strBuffTurns > 0) eff.strength += m_strBuffAmount;
+    if (m_dexBuffTurns > 0) eff.dexterity += m_dexBuffAmount;
+
+    for (const auto& eq : {m_weapon, m_armor, m_shield, m_accessory}) {
+        if (!eq) continue;
+        eff.strength += eq->getStatBonus("str");
+        eff.dexterity += eq->getStatBonus("dex");
+        eff.constitution += eq->getStatBonus("con");
+        eff.intelligence += eq->getStatBonus("int");
+        eff.wisdom += eq->getStatBonus("wis");
+        eff.charisma += eq->getStatBonus("cha");
+    }
+    return eff;
 }
 
 std::shared_ptr<Equipment> Character::getEquippedItem(EquipSlot slot) const {
     switch (slot) {
-        case EquipSlot::WEAPON: return m_equippedWeapon;
-        case EquipSlot::ARMOR:  return m_equippedArmor;
-        case EquipSlot::SHIELD: return m_equippedShield;
-        default: return nullptr;
+        case EquipSlot::WEAPON:    return m_weapon;
+        case EquipSlot::ARMOR:     return m_armor;
+        case EquipSlot::SHIELD:    return m_shield;
+        case EquipSlot::ACCESSORY: return m_accessory;
     }
+    return nullptr;
 }
 
-// --- [v0.8.0] 상태이상 및 버프 제어 함수 구현 ---
-
-void Character::setPoison(int turns) {
-    m_poisonTurns = turns;
+bool Character::canChooseSpecialization() const {
+    return m_level >= SPEC_UNLOCK_LEVEL && m_specialization == Specialization::NONE;
 }
 
-void Character::setParalysis(int turns) {
-    m_paralysisTurns = turns;
+std::pair<Specialization, Specialization> Character::getAvailableSpecializations() const {
+    switch (m_class) {
+        case CharacterClass::WARRIOR: return {Specialization::VANGUARD, Specialization::BERSERKER};
+        case CharacterClass::MAGE:    return {Specialization::PYROMANCER, Specialization::CHRONOMANCER};
+        case CharacterClass::ROGUE:   return {Specialization::ASSASSIN, Specialization::TRAPSMITH};
+        case CharacterClass::CLERIC:  return {Specialization::PALADIN, Specialization::ORACLE};
+    }
+    return {Specialization::VANGUARD, Specialization::BERSERKER};
 }
 
-int Character::getPoisonTurns() const {
-    return m_poisonTurns;
+bool Character::chooseSpecialization(Specialization spec) {
+    if (!canChooseSpecialization()) return false;
+    const auto [a, b] = getAvailableSpecializations();
+    if (spec != a && spec != b) return false;
+    m_specialization = spec;
+    recalculateDerivedMaximums(true);
+    initSkillsForLevel();
+    return true;
 }
 
-int Character::getParalysisTurns() const {
-    return m_paralysisTurns;
+std::string Character::getSpecializationName() const {
+    const auto& lm = LocalizationManager::getInstance();
+    switch (m_specialization) {
+        case Specialization::NONE:         return lm.get("SPEC_NONE");
+        case Specialization::VANGUARD:     return lm.get("SPEC_VANGUARD");
+        case Specialization::BERSERKER:    return lm.get("SPEC_BERSERKER");
+        case Specialization::PYROMANCER:   return lm.get("SPEC_PYROMANCER");
+        case Specialization::CHRONOMANCER: return lm.get("SPEC_CHRONOMANCER");
+        case Specialization::ASSASSIN:     return lm.get("SPEC_ASSASSIN");
+        case Specialization::TRAPSMITH:    return lm.get("SPEC_TRAPSMITH");
+        case Specialization::PALADIN:      return lm.get("SPEC_PALADIN");
+        case Specialization::ORACLE:       return lm.get("SPEC_ORACLE");
+    }
+    return lm.get("SPEC_NONE");
 }
 
-bool Character::isParalyzed() const {
-    return m_paralysisTurns > 0;
+int Character::getTalentRank(TalentNode node) const {
+    return m_talents[static_cast<std::size_t>(node)];
+}
+
+bool Character::investTalent(TalentNode node) {
+    if (m_talentPoints <= 0) return false;
+    const auto idx = static_cast<std::size_t>(node);
+    if (m_talents[idx] >= MAX_TALENT_RANK) return false;
+    m_talents[idx] += 1;
+    m_talentPoints -= 1;
+    recalculateDerivedMaximums(true);
+    return true;
+}
+
+int Character::getCritThreshold() const {
+    int thresh = 20;
+    if (m_specialization == Specialization::ASSASSIN) thresh -= 1;
+    int bonusPct = getTalentRank(TalentNode::APEX) * 3;
+    for (const auto& eq : {m_weapon, m_armor, m_shield, m_accessory}) {
+        if (eq) bonusPct += eq->getCritBonusPct();
+    }
+    thresh -= bonusPct / 5;
+    return std::clamp(thresh, 16, 20);
+}
+
+int Character::getLifestealPct() const {
+    int pct = (m_specialization == Specialization::BERSERKER) ? 10 : 0;
+    for (const auto& eq : {m_weapon, m_armor, m_shield, m_accessory}) {
+        if (eq) pct += eq->getLifestealPct();
+    }
+    return std::min(50, pct);
+}
+
+int Character::getStaggerBonus() const {
+    return (getTalentRank(TalentNode::TACTICS) >= 2 ? 1 : 0) +
+           (m_specialization == Specialization::VANGUARD ? 1 : 0);
+}
+
+void Character::setPoison(int turns) { m_poisonTurns = std::max(0, turns); }
+void Character::setParalysis(int turns) { m_paralysisTurns = std::max(0, turns); }
+void Character::setBurn(int turns) { m_burnTurns = std::max(0, turns); }
+void Character::setBleed(int turns) { m_bleedTurns = std::max(0, turns); }
+void Character::setFrost(int turns) { m_frostTurns = std::max(0, turns); }
+int Character::getPoisonTurns() const { return m_poisonTurns; }
+int Character::getParalysisTurns() const { return m_paralysisTurns; }
+int Character::getBurnTurns() const { return m_burnTurns; }
+int Character::getBleedTurns() const { return m_bleedTurns; }
+int Character::getFrostTurns() const { return m_frostTurns; }
+bool Character::isParalyzed() const { return m_paralysisTurns > 0; }
+bool Character::hasAnyDebuff() const {
+    return m_poisonTurns > 0 || m_paralysisTurns > 0 || m_burnTurns > 0 ||
+           m_bleedTurns > 0 || m_frostTurns > 0;
+}
+
+void Character::cureAllDebuffs() {
+    m_poisonTurns = 0;
+    m_paralysisTurns = 0;
+    m_burnTurns = 0;
+    m_bleedTurns = 0;
+    m_frostTurns = 0;
 }
 
 void Character::applyStrBuff(int amount, int turns) {
-    m_strBuffAmount = amount;
-    m_strBuffTurns = turns;
+    m_strBuffAmount = std::max(m_strBuffAmount, amount);
+    m_strBuffTurns = std::max(m_strBuffTurns, turns);
 }
 
 void Character::applyDexBuff(int amount, int turns) {
-    m_dexBuffAmount = amount;
-    m_dexBuffTurns = turns;
+    m_dexBuffAmount = std::max(m_dexBuffAmount, amount);
+    m_dexBuffTurns = std::max(m_dexBuffTurns, turns);
 }
 
 void Character::applyBless(int turns) {
-    m_blessTurns = turns;
+    m_blessTurns = std::max(m_blessTurns, turns);
 }
 
-int Character::getStrBuffAmount() const {
-    return m_strBuffTurns > 0 ? m_strBuffAmount : 0;
-}
-
-int Character::getDexBuffAmount() const {
-    return m_dexBuffTurns > 0 ? m_dexBuffAmount : 0;
-}
-
+int Character::getStrBuffAmount() const { return m_strBuffAmount; }
+int Character::getDexBuffAmount() const { return m_dexBuffAmount; }
 int Character::getStrBuffTurns() const { return m_strBuffTurns; }
 int Character::getDexBuffTurns() const { return m_dexBuffTurns; }
-
-int Character::getBlessTurns() const {
-    return m_blessTurns;
-}
+int Character::getBlessTurns() const { return m_blessTurns; }
 
 void Character::processTurnEffects(std::vector<std::string>& logOutput) {
     if (isDead()) return;
+    const auto& lm = LocalizationManager::getInstance();
 
-    // 독 대미지 정산 (매 턴 1d3의 지속 대미지 적용)
+    // 자신의 턴 시작 시 이전 턴의 방어 태세 종료
+    m_guarding = false;
+
     if (m_poisonTurns > 0) {
-        int poisonDmg = SessionRng::global().rollDie(3);
-        takeDamage(poisonDmg);
-        logOutput.push_back(LocalizationManager::getInstance().format("STATUS_LOG_POISON_DAMAGE", {
-            {"target", m_name}, {"damage", std::to_string(poisonDmg)}}));
-        
-        m_poisonTurns = std::max(0, m_poisonTurns - 1);
-        if (isDead()) {
-            logOutput.push_back(LocalizationManager::getInstance().format("COMBAT_LOG_DEFEATED", {
-                {"target", m_name}}));
-        }
+        const int dmg = SessionRng::global().rollDie(4);
+        takeDamage(dmg);
+        logOutput.push_back(lm.format("STATUS_LOG_POISON_DAMAGE", {
+            {"target", m_name}, {"damage", std::to_string(dmg)}}));
+        --m_poisonTurns;
+        if (isDead()) return;
     }
-
-    // 마비 및 기절 지속 턴수 감소
-    if (m_paralysisTurns > 0) {
-        m_paralysisTurns = std::max(0, m_paralysisTurns - 1);
+    if (m_burnTurns > 0) {
+        const int dmg = SessionRng::global().rollDie(4) + 1;
+        takeDamage(dmg);
+        logOutput.push_back(lm.format("STATUS_LOG_BURN_DAMAGE", {
+            {"target", m_name}, {"damage", std::to_string(dmg)}}));
+        --m_burnTurns;
+        if (isDead()) return;
     }
-
+    if (m_bleedTurns > 0) {
+        const int dmg = SessionRng::global().rollDie(3) + 1;
+        takeDamage(dmg);
+        logOutput.push_back(lm.format("STATUS_LOG_BLEED_DAMAGE", {
+            {"target", m_name}, {"damage", std::to_string(dmg)}}));
+        --m_bleedTurns;
+        if (isDead()) return;
+    }
+    if (m_paralysisTurns > 0) --m_paralysisTurns;
+    if (m_frostTurns > 0) --m_frostTurns;
 }
 
 void Character::advanceCombatBuffDurations(std::vector<std::string>& logOutput) {
+    (void)logOutput;
     if (m_strBuffTurns > 0) {
-        m_strBuffTurns = std::max(0, m_strBuffTurns - 1);
-        if (m_strBuffTurns == 0) {
-            m_strBuffAmount = 0;
-            logOutput.push_back(LocalizationManager::getInstance().format("STATUS_LOG_BUFF_EXPIRED", {
-                {"target", m_name}, {"buff", LocalizationManager::getInstance().get("STATUS_STRENGTH")}}));
-        }
+        --m_strBuffTurns;
+        if (m_strBuffTurns == 0) m_strBuffAmount = 0;
     }
     if (m_dexBuffTurns > 0) {
-        m_dexBuffTurns = std::max(0, m_dexBuffTurns - 1);
-        if (m_dexBuffTurns == 0) {
-            m_dexBuffAmount = 0;
-            logOutput.push_back(LocalizationManager::getInstance().format("STATUS_LOG_BUFF_EXPIRED", {
-                {"target", m_name}, {"buff", LocalizationManager::getInstance().get("STATUS_DEXTERITY")}}));
-        }
+        --m_dexBuffTurns;
+        if (m_dexBuffTurns == 0) m_dexBuffAmount = 0;
     }
-    if (m_blessTurns > 0) {
-        m_blessTurns = std::max(0, m_blessTurns - 1);
-        if (m_blessTurns == 0) {
-            logOutput.push_back(LocalizationManager::getInstance().format("STATUS_LOG_BUFF_EXPIRED", {
-                {"target", m_name}, {"buff", LocalizationManager::getInstance().get("STATUS_BLESS")}}));
-        }
-    }
+    if (m_blessTurns > 0) --m_blessTurns;
+    if (m_tauntTurns > 0) --m_tauntTurns;
+    if (m_wardTurns > 0) --m_wardTurns;
 }
 
 void Character::clearCombatBuffs() {
-    m_strBuffTurns = 0;
+    m_guarding = false;
+    m_tauntTurns = 0;
+    m_wardTurns = 0;
     m_strBuffAmount = 0;
-    m_dexBuffTurns = 0;
+    m_strBuffTurns = 0;
     m_dexBuffAmount = 0;
+    m_dexBuffTurns = 0;
     m_blessTurns = 0;
+    m_paralysisTurns = 0;
+    m_frostTurns = 0;
+    m_bleedTurns = 0;
+    m_burnTurns = 0;
 }
-
-// --- [v0.8.0] 보유 스킬 제어 함수 구현 ---
 
 void Character::learnSkill(std::shared_ptr<Skill> skill) {
     if (!skill) return;
-    // 중복 확인
-    auto it = std::find_if(m_skills.begin(), m_skills.end(), [&](const auto& s) {
-        return s->getId() == skill->getId();
-    });
-    if (it == m_skills.end()) {
-        m_skills.push_back(skill);
+    for (const auto& existing : m_skills) {
+        if (existing->getId() == skill->getId()) return;
     }
+    m_skills.push_back(std::move(skill));
 }
 
-const std::vector<std::shared_ptr<Skill>>& Character::getSkills() const {
-    return m_skills;
-}
+const std::vector<std::shared_ptr<Skill>>& Character::getSkills() const { return m_skills; }
 
 void Character::initSkillsForLevel() {
-    m_skills = SkillFactory::getSkillsForClassAndLevel(m_class, m_level);
-}
-
-
-int Character::getHitDieSides() const {
-    switch (m_class) {
-        case CharacterClass::WARRIOR: return 10;
-        case CharacterClass::MAGE:    return 6;
-        case CharacterClass::ROGUE:   return 8;
-        case CharacterClass::CLERIC:  return 8;
-    }
-    return 6;
+    m_skills = SkillFactory::getSkillsForClassAndLevel(m_class, m_level, m_specialization);
 }
 
 nlohmann::json Character::toJson() const {
     nlohmann::json j;
     j["name"] = m_name;
     j["age"] = m_age;
-    switch (m_gender) {
-        case Gender::MALE: j["gender"] = "male"; break;
-        case Gender::FEMALE: j["gender"] = "female"; break;
-        case Gender::NON_BINARY: j["gender"] = "non_binary"; break;
-        case Gender::UNSPECIFIED: j["gender"] = "unspecified"; break;
-    }
+    j["gender"] = static_cast<int>(m_gender);
     j["class"] = static_cast<int>(m_class);
+    j["specialization"] = static_cast<int>(m_specialization);
+    j["row"] = static_cast<int>(m_row);
     j["level"] = m_level;
     j["xp"] = m_xp;
     j["hp"] = m_hp;
     j["maxHp"] = m_maxHp;
+    j["baseHpRolls"] = m_baseHpRolls;
     j["spellSlots"] = m_spellSlots;
     j["maxSpellSlots"] = m_maxSpellSlots;
-
-    // [v0.8.0] 독 및 마비 상태이상 영속 데이터 추가
+    j["talentPoints"] = m_talentPoints;
+    j["talents"] = m_talents;
     j["poisonTurns"] = m_poisonTurns;
-    j["paralysisTurns"] = m_paralysisTurns;
-
-    // 능력치 데이터 직렬화
+    j["burnTurns"] = m_burnTurns;
     j["abilities"] = {
-        {"strength", m_abilities.strength},
-        {"dexterity", m_abilities.dexterity},
-        {"constitution", m_abilities.constitution},
-        {"intelligence", m_abilities.intelligence},
-        {"wisdom", m_abilities.wisdom},
-        {"charisma", m_abilities.charisma}
+        {"str", m_abilities.strength},
+        {"dex", m_abilities.dexterity},
+        {"con", m_abilities.constitution},
+        {"int", m_abilities.intelligence},
+        {"wis", m_abilities.wisdom},
+        {"cha", m_abilities.charisma}
     };
-
     j["equipment"] = {
-        {"weapon", m_equippedWeapon ? m_equippedWeapon->getId() : ""},
-        {"armor", m_equippedArmor ? m_equippedArmor->getId() : ""},
-        {"shield", m_equippedShield ? m_equippedShield->getId() : ""}
+        {"weapon", m_weapon ? m_weapon->toJson() : nlohmann::json(nullptr)},
+        {"armor", m_armor ? m_armor->toJson() : nlohmann::json(nullptr)},
+        {"shield", m_shield ? m_shield->toJson() : nlohmann::json(nullptr)},
+        {"accessory", m_accessory ? m_accessory->toJson() : nlohmann::json(nullptr)}
     };
-
     return j;
 }
 
-std::unique_ptr<Character> Character::fromJson(const nlohmann::json& j, int schemaVersion) {
-    if (!j.is_object()) throw std::runtime_error("character는 객체여야 합니다.");
-    if (schemaVersion >= 4) {
-        static const std::vector<std::string> required = {
-            "name", "age", "gender", "class", "level", "xp", "hp", "maxHp",
-            "spellSlots", "maxSpellSlots", "poisonTurns", "paralysisTurns",
-            "abilities", "equipment"};
-        for (const auto& key : required) {
-            if (!j.contains(key)) throw std::runtime_error("v4 character 필수 필드 누락: " + key);
+std::unique_ptr<Character> Character::fromJson(const nlohmann::json& j) {
+    if (!j.is_object()) throw std::runtime_error("character must be object");
+    CharacterIdentity id;
+    id.name = j.at("name").get<std::string>();
+    if (!CharacterIdentityRules::isValidName(id.name)) throw std::runtime_error("invalid character name");
+    id.age = j.at("age").get<int>();
+    if (!CharacterIdentityRules::isValidAge(id.age)) throw std::runtime_error("invalid character age");
+    const int genderVal = j.at("gender").get<int>();
+    if (genderVal < 0 || genderVal > static_cast<int>(Gender::UNSPECIFIED)) {
+        throw std::runtime_error("invalid gender");
+    }
+    id.gender = static_cast<Gender>(genderVal);
+    const int classVal = j.at("class").get<int>();
+    if (classVal < 0 || classVal > static_cast<int>(CharacterClass::CLERIC)) {
+        throw std::runtime_error("invalid class");
+    }
+    id.characterClass = static_cast<CharacterClass>(classVal);
+
+    const auto& ab = j.at("abilities");
+    AbilityScore score;
+    score.strength = ab.at("str").get<int>();
+    score.dexterity = ab.at("dex").get<int>();
+    score.constitution = ab.at("con").get<int>();
+    score.intelligence = ab.at("int").get<int>();
+    score.wisdom = ab.at("wis").get<int>();
+    score.charisma = ab.at("cha").get<int>();
+
+    auto ch = std::make_unique<Character>(id, score);
+    ch->m_weapon.reset();
+    ch->m_armor.reset();
+    ch->m_shield.reset();
+    ch->m_accessory.reset();
+
+    ch->m_level = std::clamp(j.at("level").get<int>(), 1, MAX_LEVEL);
+    ch->m_xp = std::max(0, j.at("xp").get<int>());
+    ch->m_baseHpRolls = std::max(4, j.at("baseHpRolls").get<int>());
+    const int specVal = j.value("specialization", 0);
+    if (specVal < 0 || specVal > static_cast<int>(Specialization::ORACLE)) {
+        throw std::runtime_error("invalid specialization");
+    }
+    ch->m_specialization = static_cast<Specialization>(specVal);
+    const int rowVal = j.value("row", 0);
+    if (rowVal < 0 || rowVal > 1) throw std::runtime_error("invalid row");
+    ch->m_row = static_cast<CombatRow>(rowVal);
+
+    ch->m_talentPoints = std::max(0, j.value("talentPoints", 0));
+    if (j.contains("talents") && j["talents"].is_array() && j["talents"].size() == 4) {
+        for (std::size_t i = 0; i < 4; ++i) {
+            ch->m_talents[i] = std::clamp(j["talents"][i].get<int>(), 0, MAX_TALENT_RANK);
         }
     }
 
-    const std::string serializedName = j.at("name").get<std::string>();
-    const auto normalizedName = CharacterIdentityRules::normalizeName(serializedName);
-    if (!normalizedName || (schemaVersion >= 3 && *normalizedName != serializedName)) {
-        throw std::runtime_error("character name 형식이 잘못됐습니다.");
-    }
-    const std::string name = *normalizedName;
-    const int classValue = j.at("class").get<int>();
-    const int level = j.at("level").get<int>();
-    const int xp = j.at("xp").get<int>();
-    const int hp = j.at("hp").get<int>();
-    const bool canonical = schemaVersion >= 2;
-    const int maxHp = j.at(canonical ? "maxHp" : "max_hp").get<int>();
-    const int spellSlots = j.at(canonical ? "spellSlots" : "spell_slots").get<int>();
-    const int maxSpellSlots = j.at(canonical ? "maxSpellSlots" : "max_spell_slots").get<int>();
-    const int poisonTurns = j.value(canonical ? "poisonTurns" : "poison_turns", 0);
-    const int paralysisTurns = j.value(canonical ? "paralysisTurns" : "paralysis_turns", 0);
-    const int age = schemaVersion >= 3 ? j.at("age").get<int>() : 0;
-    const std::string genderValue = schemaVersion >= 3
-        ? j.at("gender").get<std::string>() : "unspecified";
-
-    if (age != 0 && (age < 18 || age > 80)) throw std::runtime_error("character age 범위를 벗어났습니다.");
-    if (classValue < 0 || classValue > 3) throw std::runtime_error("character class가 잘못됐습니다.");
-    if (level < 1 || level > 3) throw std::runtime_error("character level 범위를 벗어났습니다.");
-    if (xp < 0 || xp > 1'000'000'000) throw std::runtime_error("character xp 범위를 벗어났습니다.");
-    if (maxHp < 1 || maxHp > 10'000 || hp < 0 || hp > maxHp) {
-        throw std::runtime_error("character hp 범위를 벗어났습니다.");
-    }
-    if (maxSpellSlots < 0 || maxSpellSlots > 100 || spellSlots < 0 || spellSlots > maxSpellSlots) {
-        throw std::runtime_error("character spell slot 범위를 벗어났습니다.");
-    }
-    const bool spellcaster = classValue == static_cast<int>(CharacterClass::MAGE) ||
-                             classValue == static_cast<int>(CharacterClass::CLERIC);
-    const int expectedMaxSpellSlots = spellcaster ? level + 1 : 0;
-    if (maxSpellSlots != expectedMaxSpellSlots) {
-        throw std::runtime_error("character class/level과 최대 주문 슬롯이 일치하지 않습니다.");
-    }
-    if (poisonTurns < 0 || poisonTurns > 1'000 || paralysisTurns < 0 || paralysisTurns > 1'000) {
-        throw std::runtime_error("character status turn 범위를 벗어났습니다.");
+    if (j.contains("equipment") && j["equipment"].is_object()) {
+        const auto& eq = j["equipment"];
+        auto loadSlot = [&](const char* key) {
+            if (!eq.contains(key) || eq[key].is_null()) return;
+            auto item = ItemFactory::createItemFromJson(eq[key]);
+            auto equipPtr = std::dynamic_pointer_cast<Equipment>(item);
+            if (!equipPtr || !ch->equip(equipPtr)) {
+                throw std::runtime_error(std::string("invalid equipped item in slot: ") + key);
+            }
+        };
+        loadSlot("weapon");
+        loadSlot("armor");
+        loadSlot("shield");
+        loadSlot("accessory");
     }
 
-    Gender gender = Gender::UNSPECIFIED;
-    if (genderValue == "male") gender = Gender::MALE;
-    else if (genderValue == "female") gender = Gender::FEMALE;
-    else if (genderValue == "non_binary") gender = Gender::NON_BINARY;
-    else if (genderValue != "unspecified") throw std::runtime_error("character gender 값이 잘못됐습니다.");
-    if (schemaVersion >= 3 && ((age == 0) != (gender == Gender::UNSPECIFIED))) {
-        throw std::runtime_error("character legacy identity 조합이 잘못됐습니다.");
-    }
-
-    auto charClass = static_cast<CharacterClass>(classValue);
-    auto character = std::unique_ptr<Character>(new Character(
-        CharacterIdentity{name, age, gender, charClass}, false));
-    character->m_level = level;
-    character->m_xp = xp;
-    character->m_hp = hp;
-    character->m_maxHp = maxHp;
-    character->m_spellSlots = spellSlots;
-    character->m_maxSpellSlots = maxSpellSlots;
-    character->m_poisonTurns = poisonTurns;
-    character->m_paralysisTurns = paralysisTurns;
-
-    const auto& abilities = j.at("abilities");
-    auto ability = [&](const char* canonicalKey, const char* legacyKey) {
-        const int score = abilities.at(canonical ? canonicalKey : legacyKey).get<int>();
-        if (score < 1 || score > 30) throw std::runtime_error("ability score 범위를 벗어났습니다.");
-        return score;
-    };
-    character->m_abilities.strength = ability("strength", "str");
-    character->m_abilities.dexterity = ability("dexterity", "dex");
-    character->m_abilities.constitution = ability("constitution", "con");
-    character->m_abilities.intelligence = ability("intelligence", "int");
-    character->m_abilities.wisdom = ability("wisdom", "wis");
-    character->m_abilities.charisma = ability("charisma", "cha");
-
-    std::string wpnId;
-    std::string armId;
-    std::string shdId;
-    if (canonical) {
-        const auto& equipment = j.at("equipment");
-        wpnId = equipment.at("weapon").get<std::string>();
-        armId = equipment.at("armor").get<std::string>();
-        shdId = equipment.at("shield").get<std::string>();
-    } else {
-        wpnId = j.at("eq_weapon").get<std::string>();
-        armId = j.at("eq_armor").get<std::string>();
-        shdId = j.at("eq_shield").get<std::string>();
-    }
-
-    auto equipmentById = [](const std::string& id) -> std::shared_ptr<Equipment> {
-        if (id.empty()) return nullptr;
-        auto equipment = std::dynamic_pointer_cast<Equipment>(ItemFactory::createItem(id));
-        if (!equipment) throw std::runtime_error("알 수 없는 equipment id: " + id);
-        return equipment;
-    };
-
-    character->unequip(EquipSlot::WEAPON);
-    character->unequip(EquipSlot::ARMOR);
-    character->unequip(EquipSlot::SHIELD);
-
-    if (!wpnId.empty()) {
-        const auto weapon = equipmentById(wpnId);
-        if (weapon->getSlot() != EquipSlot::WEAPON || !character->equip(weapon)) {
-            throw std::runtime_error("장착할 수 없는 weapon 조합입니다: " + wpnId);
-        }
-    } else {
-        character->unequip(EquipSlot::WEAPON);
-    }
-    
-    if (!armId.empty()) {
-        const auto armor = equipmentById(armId);
-        if (armor->getSlot() != EquipSlot::ARMOR || !character->equip(armor)) {
-            throw std::runtime_error("장착할 수 없는 armor 조합입니다: " + armId);
-        }
-    } else {
-        character->unequip(EquipSlot::ARMOR);
-    }
-
-    if (!shdId.empty()) {
-        const auto shield = equipmentById(shdId);
-        if (shield->getSlot() != EquipSlot::SHIELD || !character->equip(shield)) {
-            throw std::runtime_error("장착할 수 없는 shield 조합입니다: " + shdId);
-        }
-    } else {
-        character->unequip(EquipSlot::SHIELD);
-    }
-
-    // 레벨 복원에 따른 스킬 재로딩
-    character->initSkillsForLevel();
-
-    return character;
+    ch->recalculateDerivedMaximums(false);
+    ch->m_hp = std::clamp(j.at("hp").get<int>(), 0, ch->m_maxHp);
+    ch->m_spellSlots = std::clamp(j.at("spellSlots").get<int>(), 0, ch->m_maxSpellSlots);
+    ch->m_poisonTurns = std::max(0, j.value("poisonTurns", 0));
+    ch->m_burnTurns = std::max(0, j.value("burnTurns", 0));
+    ch->initSkillsForLevel();
+    return ch;
 }
 
 } // namespace crawl

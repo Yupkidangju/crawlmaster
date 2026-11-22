@@ -1,16 +1,17 @@
 # Third-Party Notices and Provenance Gate
 
-작성일: 2026-09-03  
-범위: Crawlmaster 0.9.4 pre-release demo candidate
+작성일: 2026-11-22  
+범위: Crawlmaster 1.0.0 AAA Release
 
 ## 코드 의존성
 
 | 구성요소 | 버전/immutable revision | 라이선스 | 근거 |
 | --- | --- | --- | --- |
-| SFML | 2.6.1 / `69ea0cd863aed1d4092b970b676924a716ff718b` | zlib/png | FetchContent source의 `license.md` |
-| nlohmann/json | 3.11.3 / `9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03` | MIT | FetchContent source의 `LICENSE.MIT` |
+| SFML | 2.6.1 / `69ea0cd863aed1d4092b970b676924a716ff718b` | zlib/png | FetchContent source의 `license.md` (`licenses/SFML-ZLIB.txt`) |
+| nlohmann/json | 3.11.3 / `9cca280a4d0ccf0c08f47a99aa71d1b0e52f8d03` | MIT | FetchContent source의 `LICENSE.MIT` (`licenses/nlohmann-json-MIT.txt`) |
+| miniaudio | 0.11.26 / `877ea4a7c2601c7b0f2a44e83dfac42e6470fea6` | MIT-0 / Public Domain (Unlicense) | FetchContent source의 `LICENSE` (`licenses/miniaudio-MIT-0.txt`) |
 
-SFML과 nlohmann/json의 라이선스 원문은 package의 `share/doc/crawlmaster/licenses/`에 포함한다. `DEPENDENCY_MANIFEST.spdx.json`은 source component manifest이며 `scripts/generate_release_sbom.py`와 CI가 artifact-specific SPDX/Grype 증거를 만든다. 이 문서는 법률 자문을 대신하지 않는다.
+SFML, nlohmann/json, miniaudio의 라이선스 원문은 package의 `share/doc/crawlmaster/licenses/`에 포함한다. `DEPENDENCY_MANIFEST.spdx.json`은 source component manifest이며 `scripts/generate_release_sbom.py`와 CI가 artifact-specific SPDX/Grype 증거를 만든다. 신규 3D 텍스처·초상화·몬스터·셰이더·오디오 에셋 출처는 `ASSET_PROVENANCE.md`에 기록한다. 이 문서는 법률 자문을 대신하지 않는다.
 
 ## 번들 폰트
 

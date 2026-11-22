@@ -1,7 +1,7 @@
 # CMakeLists.txt
 # Crawlmaster v1.0.0 — AAA Dark Fantasy 5-Floor 3D Dungeon Crawler RPG
 cmake_minimum_required(VERSION 3.28)
-project(Crawlmaster VERSION 1.0.0 LANGUAGES CXX)
+project(Crawlmaster VERSION 1.0.1 LANGUAGES CXX)
 
 enable_testing()
 include(GNUInstallDirs)

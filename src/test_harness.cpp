@@ -112,7 +112,8 @@ int main(int /*argc*/, char** /*argv*/) {
     CHECK(lm.getBgmVolume() == 50);
     CHECK(lm.getSfxVolume() == 90);
 
-    std::filesystem::remove_all(tempDir);
+    std::error_code ec;
+    std::filesystem::remove_all(tempDir, ec);
     std::cout << "[PASS] TestHarness v1.0.0 AAA core checks passed.\n";
     return 0;
 }

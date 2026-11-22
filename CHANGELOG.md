@@ -4,6 +4,15 @@
 
 ---
 
+## [1.0.1] - 2026-11-23 (Windows OpenGL 1.1 Compatibility Patch)
+
+### Fixed (수정됨)
+* Windows GDI Generic OpenGL 1.1 (`GL_MAX_TEXTURE_SIZE = 1024`, 1024×768 데스크톱) 호환성을 위해 `title_bg.png`·`town_bg.png`를 1024×576(16:9)으로 정규화하고 `AssetManager`에 `sf::Texture::getMaximumSize()` 초과 이미지 자동 CPU 축소 가드를 추가했다.
+* `UiStateRasterTests`가 GPU 최대 텍스처 크기 및 데스크톱 해상도에 따라 1280×720 또는 960×540으로 자동 적응하고, GL 1.1 소프트웨어 텍스처 3D 폴백 프레임(`16_dungeon_1f_sw3d.png`)까지 명시 검증하도록 개선했다.
+* 백업 복구 시 파일 핸들을 명시적으로 닫아 Windows 파일 잠금 경합을 차단했다.
+
+---
+
 ## [1.0.0] - 2026-11-22 (AAA Dark Fantasy 3D Refactoring & Linux/Windows Release)
 
 ### Added (추가됨)

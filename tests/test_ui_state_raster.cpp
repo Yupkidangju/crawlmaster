@@ -27,6 +27,7 @@
 namespace {
 
 struct ImageStats {
+    bool ok = false;
     double meanR = 0.0;
     double meanG = 0.0;
     double meanB = 0.0;
@@ -45,10 +46,17 @@ ImageStats captureAndVerify(crawl::Game& game, const std::filesystem::path& outF
     win.display();
 
     sf::Texture tex;
-    tex.create(sz.x, sz.y);
+    if (!tex.create(sz.x, sz.y)) {
+        std::cerr << "[UiStateRaster] sf::Texture::create failed for " << sz.x << "x" << sz.y
+                  << " (maxTex=" << sf::Texture::getMaximumSize() << ")\n";
+        return {};
+    }
     tex.update(win);
     const sf::Image img = tex.copyToImage();
-    img.saveToFile(outFile.string());
+    if (!img.saveToFile(outFile.string())) {
+        std::cerr << "[UiStateRaster] Failed to save screenshot: " << outFile << "\n";
+        return {};
+    }
 
     double sumR = 0.0, sumG = 0.0, sumB = 0.0, sumL = 0.0, sumL2 = 0.0;
     std::size_t n = 0;
@@ -67,7 +75,7 @@ ImageStats captureAndVerify(crawl::Game& game, const std::filesystem::path& outF
     const double dn = static_cast<double>(std::max<std::size_t>(1, n));
     const double meanL = sumL / dn;
     const double var = std::max(0.0, sumL2 / dn - meanL * meanL);
-    return {sumR / dn, sumG / dn, sumB / dn, std::sqrt(var)};
+    return {true, sumR / dn, sumG / dn, sumB / dn, std::sqrt(var)};
 }
 
 } // namespace
@@ -89,10 +97,19 @@ int main(int argc, char** argv) {
     lm.setLanguage(Language::KO);
     lm.setTextScale(100);
     lm.setHighContrast(false);
-    lm.setResolution(1280, 720);
+    // Windows GDI Generic OpenGL 1.1(GL_MAX_TEXTURE_SIZE=1024, 1024x768 데스크톱)에서도
+    // 16:9 텍스처 캡처가 100% 성공하도록 960x540으로 자동 적응한다.
+    const unsigned int maxTex = sf::Texture::getMaximumSize();
+    const auto desktop = sf::VideoMode::getDesktopMode();
+    const bool useFull720p = (maxTex >= 1280U && desktop.width >= 1280U && desktop.height >= 720U);
+    lm.setResolution(useFull720p ? 1280 : 960, useFull720p ? 720 : 540);
     lm.setFullscreen(false);
+    lm.saveConfig();
 
     Game game(false);
+    if (game.getWindow().getSize().x > maxTex || game.getWindow().getSize().y > maxTex) {
+        game.getWindow().setSize({960U, 540U});
+    }
     game.getParty().startNewGame();
     game.getParty().markFloorReached(5);
     game.getParty().getMember(0)->addXp(600);
@@ -172,12 +189,20 @@ int main(int argc, char** argv) {
     lm.setHighContrast(false);
     game.getStates().replaceAll(std::make_unique<VictoryState>(game));
     const auto sVic = captureAndVerify(game, outDir / "15_victory_ja.png");
-    CHECK(sVic.stdDev > 14.0);
+    CHECK(sVic.ok && sVic.stdDev > 14.0);
 
+    // 8. GL 1.1 소프트웨어 텍스처 3D 폴백 경로 명시 검증
     lm.setLanguage(Language::KO);
+    lm.setGraphicsQuality(0);
+    game.getStates().replaceAll(std::make_unique<DungeonState>(game, 1));
+    const auto sFallback = captureAndVerify(game, outDir / "16_dungeon_1f_sw3d.png");
+    CHECK(sFallback.ok && sFallback.stdDev > 14.0);
+    lm.setGraphicsQuality(1);
+
     game.completeShutdown();
-    std::filesystem::remove_all(tempData);
-    std::cout << "[PASS] UiStateRasterTests passed (15 AAA visual frames captured and verified in "
+    std::error_code ec;
+    std::filesystem::remove_all(tempData, ec);
+    std::cout << "[PASS] UiStateRasterTests passed (16 AAA visual frames captured and verified in "
               << outDir << ").\n";
     return 0;
 }

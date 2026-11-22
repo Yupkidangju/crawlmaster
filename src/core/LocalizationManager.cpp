@@ -210,9 +210,12 @@ PersistenceResult LocalizationManager::loadConfig(const std::string& filepath) {
     auto recoverBackup = [&]() -> PersistenceResult {
         auto backupResult = loadCandidate(backup, PersistenceStatus::RecoveredFromBackup);
         if (!backupResult) return backupResult;
-        std::ifstream backupFile(backup, std::ios::binary);
-        const std::string backupBytes{std::istreambuf_iterator<char>(backupFile),
-                                      std::istreambuf_iterator<char>()};
+        std::string backupBytes;
+        {
+            std::ifstream backupFile(backup, std::ios::binary);
+            backupBytes.assign(std::istreambuf_iterator<char>(backupFile),
+                               std::istreambuf_iterator<char>());
+        }
         const auto restoreResult = Persistence::atomicWriteText(primary, backupBytes);
         backupResult.message = restoreResult
             ? "Recovered config from backup."

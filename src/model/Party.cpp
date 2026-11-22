@@ -481,8 +481,11 @@ PersistenceResult Party::loadFromFile(const std::string& filePath) {
         if (!std::filesystem::exists(backup)) return {PersistenceStatus::NotFound, backup, "No backup."};
         auto bakRes = loadCandidate(backup, PersistenceStatus::RecoveredFromBackup);
         if (bakRes) {
-            std::ifstream bf(backup, std::ios::binary);
-            const std::string bytes{std::istreambuf_iterator<char>(bf), std::istreambuf_iterator<char>()};
+            std::string bytes;
+            {
+                std::ifstream bf(backup, std::ios::binary);
+                bytes.assign(std::istreambuf_iterator<char>(bf), std::istreambuf_iterator<char>());
+            }
             Persistence::atomicWriteText(primary, bytes);
             return bakRes;
         }

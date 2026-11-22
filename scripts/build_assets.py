@@ -162,11 +162,12 @@ def add_radial_glow(canvas: Image.Image, cx: int, cy: int, radius: int,
 
 
 def build_backgrounds() -> None:
-    Image.open(find_source("title_bg")).convert("RGB").resize((1280, 720), Image.Resampling.LANCZOS).save(
+    # 1024x576 (정확한 16:9, Windows GDI Generic OpenGL 1.1 GL_MAX_TEXTURE_SIZE=1024 완벽 호환)
+    Image.open(find_source("title_bg")).convert("RGB").resize((1024, 576), Image.Resampling.LANCZOS).save(
         ASSETS / "backgrounds/title_bg.png", optimize=True)
-    Image.open(find_source("town_bg")).convert("RGB").resize((1280, 720), Image.Resampling.LANCZOS).save(
+    Image.open(find_source("town_bg")).convert("RGB").resize((1024, 576), Image.Resampling.LANCZOS).save(
         ASSETS / "backgrounds/town_bg.png", optimize=True)
-    print("Built backgrounds")
+    print("Built backgrounds (1024x576 OpenGL 1.1 safe)")
 
 
 def paint_textured_rect(base: Image.Image, tex: Image.Image, box: tuple[int, int, int, int],

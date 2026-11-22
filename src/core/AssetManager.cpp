@@ -1,9 +1,35 @@
 #include "core/AssetManager.hpp"
 #include "core/ResourceLocator.hpp"
 
+#include <algorithm>
 #include <iostream>
 
 namespace crawl {
+namespace {
+
+// OpenGL 1.1(GL_MAX_TEXTURE_SIZE=1024 등) 환경에서도 대형 텍스처가 절대 로드 실패하지 않도록 CPU 안전 축소
+sf::Image downscaleIfNeeded(const sf::Image& src, unsigned int maxDim) {
+    const auto sz = src.getSize();
+    if (maxDim == 0 || (sz.x <= maxDim && sz.y <= maxDim)) {
+        return src;
+    }
+    const double scale = std::min(static_cast<double>(maxDim) / static_cast<double>(sz.x),
+                                  static_cast<double>(maxDim) / static_cast<double>(sz.y));
+    const unsigned int nw = std::max(1U, static_cast<unsigned int>(static_cast<double>(sz.x) * scale));
+    const unsigned int nh = std::max(1U, static_cast<unsigned int>(static_cast<double>(sz.y) * scale));
+    sf::Image out;
+    out.create(nw, nh);
+    for (unsigned int y = 0; y < nh; ++y) {
+        const unsigned int sy = std::min(sz.y - 1, static_cast<unsigned int>((static_cast<double>(y) + 0.5) / scale));
+        for (unsigned int x = 0; x < nw; ++x) {
+            const unsigned int sx = std::min(sz.x - 1, static_cast<unsigned int>((static_cast<double>(x) + 0.5) / scale));
+            out.setPixel(x, y, src.getPixel(sx, sy));
+        }
+    }
+    return out;
+}
+
+} // namespace
 
 void AssetManager::initializeShaders() {
     if (m_shadersAttempted) return;
@@ -44,8 +70,15 @@ const sf::Texture* AssetManager::getTexture(const std::string& relativePath,
 
     auto tex = std::make_unique<sf::Texture>();
     const auto fullPath = ResourceLocator::assetPath(relativePath);
-    if (!tex->loadFromFile(fullPath.string())) {
-        std::cerr << "[Asset Warning] Failed to load texture: " << fullPath << std::endl;
+    sf::Image img;
+    if (!img.loadFromFile(fullPath.string())) {
+        std::cerr << "[Asset Warning] Failed to load image: " << fullPath << std::endl;
+        m_textures.emplace(relativePath, nullptr);
+        return nullptr;
+    }
+    const sf::Image safeImg = downscaleIfNeeded(img, sf::Texture::getMaximumSize());
+    if (!tex->loadFromImage(safeImg)) {
+        std::cerr << "[Asset Warning] Failed to upload texture: " << fullPath << std::endl;
         m_textures.emplace(relativePath, nullptr);
         return nullptr;
     }

@@ -2,18 +2,18 @@
   "spdxVersion": "SPDX-2.3",
   "dataLicense": "CC0-1.0",
   "SPDXID": "SPDXRef-DOCUMENT",
-  "name": "Crawlmaster-1.0.0-source-component-manifest",
+  "name": "Crawlmaster-1.0.1-source-component-manifest",
   "documentComment": "Source component manifest for immutable code dependencies and bundled fonts. CI generates an artifact-specific Syft SPDX SBOM and Grype report; platform runtime libraries remain external system requirements.",
-  "documentNamespace": "https://crawlmaster.local/spdx/Crawlmaster-1.0.0-20261122",
+  "documentNamespace": "https://crawlmaster.local/spdx/Crawlmaster-1.0.1-20261123",
   "creationInfo": {
-    "created": "2026-11-22T00:00:00Z",
-    "creators": ["Tool: Crawlmaster v1.0.0 release manifest"]
+    "created": "2026-11-23T00:00:00Z",
+    "creators": ["Tool: Crawlmaster v1.0.1 release manifest"]
   },
   "packages": [
     {
       "name": "Crawlmaster",
       "SPDXID": "SPDXRef-Package-Crawlmaster",
-      "versionInfo": "1.0.0",
+      "versionInfo": "1.0.1",
       "downloadLocation": "NOASSERTION",
       "filesAnalyzed": false,
       "licenseConcluded": "NOASSERTION",

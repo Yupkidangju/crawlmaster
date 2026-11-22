@@ -105,7 +105,8 @@ int main() {
     game.requestShutdown();
     CHECK(game.isShutdownApproved());
 
-    std::filesystem::remove_all(tempDir);
+    std::error_code ec;
+    std::filesystem::remove_all(tempDir, ec);
     std::cout << "[PASS] ControllerContractTests E2E passed.\n";
     return 0;
 }

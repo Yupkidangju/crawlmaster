@@ -6,4 +6,4 @@
 - [x] Phase 3: 전술 전투·성장·장비/대장간·24종 몬스터/도감·5층 5바이옴/탐험 기믹·8종 퀘스트·Save v5 클린 브레이크
 - [x] Phase 4: OpenGL/GLSL 3D 던전 렌더러(+ GL 1.1 텍스처 폴백) + MVC `UiSystem`/`UiTheme` + 전 컨트롤러 하이브리드 + 5개국어(464키)
 - [x] Phase 5: Debug/Release `-Werror` 빌드, 전 CTest(15/15) 통과, 1280×720 실제 캡처 15장 시각 검수·수정, MinGW Windows x86_64 전체 타겟 교차 컴파일, CPack/SHA-256/SPDX SBOM/임의 CWD 스모크 검증
-- [ ] Phase 6: 최종 커밋·`main` 및 `v1.0.0` 태그 푸시 → GitHub Actions Linux/Windows CI 및 GitHub Release 완료 검증
+- [x] Phase 6: 최종 커밋·`main` 및 `v1.0.1` 태그 푸시 → GitHub Actions Linux/Windows CI(`45045466158`) 및 GitHub Release `v1.0.1` 완료 검증
